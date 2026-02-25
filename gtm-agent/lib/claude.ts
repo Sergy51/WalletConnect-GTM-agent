@@ -4,7 +4,7 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 })
 
-export const CLAUDE_MODEL = 'claude-3-5-haiku-20241022'
+export const CLAUDE_MODEL = 'claude-sonnet-4-5'
 
 export const WC_PAY_SYSTEM_PROMPT = `You are a top B2B sales copywriter for WalletConnect Pay — an end-to-end crypto and stablecoin payment method (APM) for global commerce.
 

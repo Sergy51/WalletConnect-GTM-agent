@@ -20,6 +20,10 @@ export interface Lead {
   company_size: string | null
   walletconnect_value_prop: string | null
   recent_news: string | null
+  enrichment_confidence: 'high' | 'low' | null
+  icp_segment: string | null
+  fit_score: 'High' | 'Medium' | 'Low' | null
+  fit_reason: string | null
   status: LeadStatus
   created_at: string
   updated_at: string
@@ -35,6 +39,8 @@ export interface Message {
   sent_at: string | null
   follow_up_1_due: string | null
   follow_up_2_due: string | null
+  follow_up_1_body: string | null
+  follow_up_2_body: string | null
   created_at: string
 }
 
@@ -53,4 +59,15 @@ export interface FunnelStats {
   message_drafted: number
   sent: number
   responded: number
+}
+
+export interface GeneratedLead {
+  name: string
+  email: string | null
+  title: string | null
+  company: string
+  company_website: string | null
+  company_size: string | null
+  linkedin_url: string | null
+  is_inferred: boolean
 }
