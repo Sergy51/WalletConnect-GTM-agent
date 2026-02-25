@@ -1,30 +1,39 @@
 export type LeadStatus =
-  | 'new'
-  | 'qualified'
-  | 'message_drafted'
-  | 'sent'
-  | 'followed_up'
-  | 'responded'
-  | 'not_interested'
+  | 'New'
+  | 'Contacted'
+  | 'Qualified'
+  | 'Proposal'
+  | 'Negotiating'
+  | 'Won'
+  | 'Lost'
+  | 'Churned'
 
 export interface Lead {
   id: string
-  name: string
-  email: string | null
-  title: string | null
+  // Company
   company: string
-  linkedin_url: string | null
-  twitter_handle: string | null
   company_website: string | null
+  lead_type: 'PSP' | 'Merchant' | 'Other' | null
+  industry: string | null
+  company_size_employees: string | null
+  company_size_revenue: string | null
+  // Contact
+  contact_name: string | null
+  contact_role: string | null
+  contact_email: string | null
+  contact_phone: string | null
+  contact_linkedin: string | null
+  // Qualification
+  lead_source: 'Inbound' | 'Outbound' | 'Referral' | 'Event' | null
+  lead_status: LeadStatus
+  payments_stack: string | null
+  crypto_capabilities: 'None' | 'Basic' | 'Advanced' | null
+  estimated_yearly_volumes: string | null
+  strategic_priorities: string | null
+  lead_priority: 'High' | 'Medium' | 'Low' | null
+  // Internal
   company_description: string | null
-  company_size: string | null
   walletconnect_value_prop: string | null
-  recent_news: string | null
-  enrichment_confidence: 'high' | 'low' | null
-  icp_segment: string | null
-  fit_score: 'High' | 'Medium' | 'Low' | null
-  fit_reason: string | null
-  status: LeadStatus
   created_at: string
   updated_at: string
 }
@@ -32,7 +41,7 @@ export interface Lead {
 export interface Message {
   id: string
   lead_id: string
-  platform: 'email' | 'linkedin' | 'twitter'
+  platform: 'email' | 'linkedin'
   subject: string | null
   body: string
   version: number
@@ -51,23 +60,4 @@ export interface OutreachLog {
   action: 'sent' | 'opened' | 'replied' | 'bounced' | 'follow_up_sent'
   timestamp: string
   notes: string | null
-}
-
-export interface FunnelStats {
-  total: number
-  qualified: number
-  message_drafted: number
-  sent: number
-  responded: number
-}
-
-export interface GeneratedLead {
-  name: string
-  email: string | null
-  title: string | null
-  company: string
-  company_website: string | null
-  company_size: string | null
-  linkedin_url: string | null
-  is_inferred: boolean
 }

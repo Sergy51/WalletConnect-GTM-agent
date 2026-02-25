@@ -26,14 +26,14 @@ export async function POST(
   }
 
   const lead = message.leads
-  if (!lead?.email) {
+  if (!lead?.contact_email) {
     return NextResponse.json({ error: 'Lead has no email address' }, { status: 400 })
   }
 
   try {
     const { data: emailData, error: emailError } = await resend.emails.send({
       from: FROM_EMAIL,
-      to: lead.email,
+      to: lead.contact_email,
       subject: message.subject || `WalletConnect Pay — ${lead.company}`,
       text: message.body,
     })
@@ -54,7 +54,7 @@ export async function POST(
         messages: [
           {
             role: 'user',
-            content: `You sent this cold email to ${lead.name} (${lead.title || 'Decision Maker'}) at ${lead.company}:
+            content: `You sent this cold email to ${lead.contact_name || 'the decision maker'} (${lead.contact_role || 'Decision Maker'}) at ${lead.company}:
 
 Subject: ${message.subject || ''}
 Body: ${message.body}
@@ -87,7 +87,7 @@ Return ONLY valid JSON: { "follow_up_1": "...", "follow_up_2": "..." }`,
       })
       .eq('id', message_id)
 
-    await supabase.from('leads').update({ status: 'sent' }).eq('id', id)
+    await supabase.from('leads').update({ lead_status: 'Contacted' }).eq('id', id)
 
     await supabase.from('outreach_log').insert({
       lead_id: id,

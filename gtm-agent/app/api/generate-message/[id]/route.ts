@@ -23,12 +23,23 @@ export async function POST(
 
   if (!lead.walletconnect_value_prop) {
     return NextResponse.json(
-      { error: 'Lead must be enriched before generating a message. Run enrichment first.' },
+      { error: 'Lead must be qualified before generating a message. Run qualification first.' },
       { status: 400 }
     )
   }
 
   try {
+    // Derive GTM track from lead_type directly
+    const gtmTrack = lead.lead_type === 'PSP' ? 'PSP' : 'Merchant'
+
+    const trackContext = gtmTrack === 'PSP'
+      ? 'This is a PSP/payment infrastructure company. Frame WC Pay as a distribution lever — one API integration adds crypto to all their merchants. Emphasise APM simplicity, built-in compliance, and the 500M+ wallet network they instantly access.'
+      : 'This is a merchant/commerce company. Frame WC Pay as a revenue and cost play — crypto customers have 15-25% higher AOV, fees are 0.5-1% vs 2.5-3.5% for cards, settlement is instant (vs 1-3 days for cards and 30+ days for other APMs), and there are no chargebacks.'
+
+    const ctaInstruction = gtmTrack === 'PSP'
+      ? 'End with a low-friction CTA like "worth a 20-min call to walk through the integration?"'
+      : 'End with a trial/demo-oriented CTA like "happy to show you a live checkout in 15 min"'
+
     const lengthInstruction =
       platform === 'email'
         ? '3 sentences for the email body (tight, no fluff)'
@@ -41,17 +52,18 @@ export async function POST(
       messages: [
         {
           role: 'user',
-          content: `Write a cold outreach ${platform} message to ${lead.name}, ${lead.title || 'Decision Maker'} at ${lead.company}.
+          content: `Write a cold outreach ${platform} message to ${lead.contact_name || 'the decision maker'}, ${lead.contact_role || 'Decision Maker'} at ${lead.company}.
 
 Company context: ${lead.company_description || lead.company}
 Why WalletConnect Pay helps them: ${lead.walletconnect_value_prop}
-Recent news/context: ${lead.recent_news || 'None available'}
+
+GTM track context: ${trackContext}
 
 Rules:
 - Tone: casual, peer-to-peer, no buzzwords, no "I hope this finds you well", no "exciting opportunity"
 - Length: ${lengthInstruction}
 - Start with something specific to them — not a generic opener
-- End with a single, low-friction CTA (e.g., "Worth a quick chat?")
+- ${ctaInstruction}
 ${platform === 'email' ? '- Include a compelling, specific subject line' : '- No subject line needed'}
 
 Return ONLY valid JSON with keys:
@@ -87,12 +99,6 @@ No markdown, no explanation, just the JSON object.`,
       .single()
 
     if (msgError) throw msgError
-
-    // Update lead status
-    await supabase
-      .from('leads')
-      .update({ status: 'message_drafted' })
-      .eq('id', id)
 
     return NextResponse.json(savedMessage)
   } catch (error) {
