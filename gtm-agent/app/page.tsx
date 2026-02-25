@@ -6,11 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { AddLeadModal } from '@/components/add-lead-modal'
 import { MessagePanel } from '@/components/message-panel'
+import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
 import type { Lead, LeadStatus } from '@/types'
 
 const STATUS_OPTIONS: LeadStatus[] = ['New', 'Qualified', 'Contacted', 'Proposal', 'Negotiating', 'Won', 'Lost', 'Churned']
 const TYPE_OPTIONS = ['PSP', 'Merchant', 'Other'] as const
-const SOURCE_OPTIONS = ['Inbound', 'Outbound', 'Referral', 'Event'] as const
 const PRIORITY_OPTIONS = ['High', 'Medium', 'Low'] as const
 const CRYPTO_OPTIONS = ['None', 'Basic', 'Advanced'] as const
 
@@ -31,10 +31,16 @@ const PRIORITY_COLORS: Record<string, string> = {
   Low: 'bg-gray-100 text-gray-600',
 }
 
+const VP_COLORS: Record<string, string> = {
+  'Lower Fees': 'bg-green-100 text-green-700',
+  'Instant Settlement': 'bg-blue-100 text-blue-700',
+  'Global Reach': 'bg-purple-100 text-purple-700',
+  'Zero Chargebacks': 'bg-red-100 text-red-700',
+  'Single API': 'bg-orange-100 text-orange-700',
+}
+
 function Spinner() {
-  return (
-    <div className="inline-block h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
-  )
+  return <div className="inline-block h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
 }
 
 interface InlineSelectProps {
@@ -58,9 +64,7 @@ function InlineSelect({ value, options, placeholder = '—', colorMap, onChange 
       </SelectTrigger>
       <SelectContent>
         {options.map((opt) => (
-          <SelectItem key={opt} value={opt}>
-            {opt}
-          </SelectItem>
+          <SelectItem key={opt} value={opt}>{opt}</SelectItem>
         ))}
       </SelectContent>
     </Select>
@@ -69,10 +73,20 @@ function InlineSelect({ value, options, placeholder = '—', colorMap, onChange 
 
 function TruncatedCell({ text }: { text: string | null }) {
   if (!text) return <span className="text-muted-foreground">—</span>
+  return <span className="truncate block max-w-[140px]" title={text}>{text}</span>
+}
+
+function KeyVpCell({ value }: { value: string | null }) {
+  if (!value) return <span className="text-muted-foreground">—</span>
+  const vps = value.split(',').map(v => v.trim()).filter(Boolean)
   return (
-    <span className="truncate block max-w-[140px]" title={text}>
-      {text}
-    </span>
+    <div className="flex flex-wrap gap-1">
+      {vps.map(vp => (
+        <span key={vp} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VP_COLORS[vp] || 'bg-gray-100 text-gray-600'}`}>
+          {vp}
+        </span>
+      ))}
+    </div>
   )
 }
 
@@ -80,7 +94,7 @@ export default function HomePage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [qualifying, setQualifying] = useState<Set<string>>(new Set())
+  const [enriching, setEnriching] = useState<Set<string>>(new Set())
   const [showAddModal, setShowAddModal] = useState(false)
   const [panelLeads, setPanelLeads] = useState<Lead[]>([])
   const [panelIndex, setPanelIndex] = useState(0)
@@ -99,12 +113,10 @@ export default function HomePage() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchLeads()
-  }, [fetchLeads])
+  useEffect(() => { fetchLeads() }, [fetchLeads])
 
   function toggleSelect(id: string) {
-    setSelected((prev) => {
+    setSelected(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -113,46 +125,33 @@ export default function HomePage() {
   }
 
   function toggleSelectAll() {
-    if (selected.size === leads.length) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(leads.map((l) => l.id)))
-    }
+    setSelected(selected.size === leads.length ? new Set() : new Set(leads.map(l => l.id)))
   }
 
   async function updateLeadField(id: string, field: string, value: string) {
-    setLeads((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, [field]: value } : l))
-    )
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l))
     try {
       const res = await fetch(`/api/update-lead/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
       })
-      if (!res.ok) {
-        toast.error('Failed to update lead')
-        fetchLeads()
-      }
+      if (!res.ok) { toast.error('Failed to update lead'); fetchLeads() }
     } catch {
       toast.error('Failed to update lead')
       fetchLeads()
     }
   }
 
-  async function qualifyLeads() {
-    const toQualify =
-      selected.size > 0
-        ? leads.filter((l) => selected.has(l.id))
-        : leads.filter((l) => l.lead_status === 'New')
+  async function enrichLeads() {
+    const toEnrich = selected.size > 0
+      ? leads.filter(l => selected.has(l.id))
+      : leads.filter(l => l.lead_status === 'New')
 
-    if (toQualify.length === 0) {
-      toast.info('No leads to qualify')
-      return
-    }
+    if (toEnrich.length === 0) { toast.info('No leads to enrich'); return }
 
-    const ids = toQualify.map((l) => l.id)
-    setQualifying(new Set(ids))
+    const ids = toEnrich.map(l => l.id)
+    setEnriching(new Set(ids))
 
     const results: Array<{ id: string; success: boolean; error?: string }> = []
     for (const id of ids) {
@@ -163,40 +162,41 @@ export default function HomePage() {
           results.push({ id, success: false, error: err.error || `HTTP ${res.status}` })
         } else {
           const updated: Lead = await res.json()
-          setLeads((prev) => prev.map((l) => (l.id === id ? updated : l)))
+          setLeads(prev => prev.map(l => l.id === id ? updated : l))
           results.push({ id, success: true })
         }
       } catch (e) {
         results.push({ id, success: false, error: e instanceof Error ? e.message : 'Unknown error' })
       } finally {
-        setQualifying((prev) => {
-          const next = new Set(prev)
-          next.delete(id)
-          return next
-        })
+        setEnriching(prev => { const next = new Set(prev); next.delete(id); return next })
       }
     }
 
-    const succeeded = results.filter((r) => r.success).length
-    const failed = results.filter((r) => !r.success).length
-    if (succeeded > 0) toast.success(`Qualified ${succeeded} lead${succeeded !== 1 ? 's' : ''}`)
-    if (failed > 0) toast.error(`${failed} lead${failed !== 1 ? 's' : ''} failed to qualify`)
+    const succeeded = results.filter(r => r.success).length
+    const failed = results.filter(r => !r.success).length
+    if (succeeded > 0) toast.success(`Enriched ${succeeded} lead${succeeded !== 1 ? 's' : ''}`)
+    if (failed > 0) toast.error(`${failed} lead${failed !== 1 ? 's' : ''} failed to enrich`)
+  }
+
+  async function deleteAllLeads() {
+    if (!window.confirm('Delete ALL leads? This cannot be undone.')) return
+    try {
+      const res = await fetch('/api/leads', { method: 'DELETE' })
+      if (!res.ok) { toast.error('Failed to delete leads'); return }
+      const { deleted } = await res.json()
+      setLeads([])
+      setSelected(new Set())
+      toast.success(`Deleted ${deleted} lead${deleted !== 1 ? 's' : ''}`)
+    } catch {
+      toast.error('Failed to delete leads')
+    }
   }
 
   function openDraftPanel() {
-    const selectedLeads = leads.filter((l) => selected.has(l.id))
+    const selectedLeads = leads.filter(l => selected.has(l.id))
     if (selectedLeads.length === 0) return
     setPanelLeads(selectedLeads)
     setPanelIndex(0)
-  }
-
-  function openDraftForLead(lead: Lead) {
-    setPanelLeads([lead])
-    setPanelIndex(0)
-  }
-
-  function handlePanelNext() {
-    setPanelIndex((i) => i + 1)
   }
 
   function handlePanelClose() {
@@ -206,7 +206,7 @@ export default function HomePage() {
   }
 
   function togglePriorityExpanded(id: string) {
-    setExpandedPriorities((prev) => {
+    setExpandedPriorities(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -225,28 +225,18 @@ export default function HomePage() {
           <Button variant="outline" size="sm" onClick={toggleSelectAll}>
             {allSelected ? 'Deselect All' : 'Select All'}
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={qualifyLeads}
-            disabled={qualifying.size > 0}
-          >
-            {qualifying.size > 0 ? (
-              <span className="flex items-center gap-1.5"><Spinner /> Qualifying...</span>
-            ) : (
-              selected.size > 0 ? `Qualify (${selected.size})` : 'Qualify New'
-            )}
+          <Button variant="outline" size="sm" onClick={enrichLeads} disabled={enriching.size > 0}>
+            {enriching.size > 0
+              ? <span className="flex items-center gap-1.5"><Spinner /> Enriching...</span>
+              : selected.size > 0 ? `Enrich (${selected.size})` : 'Enrich New'}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={openDraftPanel}
-            disabled={selected.size === 0}
-          >
+          <Button size="sm" variant="outline" onClick={openDraftPanel} disabled={selected.size === 0}>
             Draft Emails{selected.size > 0 ? ` (${selected.size})` : ''}
           </Button>
-          <Button size="sm" onClick={() => setShowAddModal(true)}>
-            Add Lead
+          <Button size="sm" onClick={() => setShowAddModal(true)}>Add Lead</Button>
+          <Button size="sm" variant="outline" onClick={deleteAllLeads}
+            className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
+            Delete All
           </Button>
         </div>
       </div>
@@ -254,9 +244,7 @@ export default function HomePage() {
       {/* Table */}
       <div className="flex-1 overflow-auto">
         {loading ? (
-          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-            Loading leads...
-          </div>
+          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">Loading leads...</div>
         ) : leads.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-muted-foreground text-sm gap-2">
             <p>No leads yet.</p>
@@ -266,16 +254,13 @@ export default function HomePage() {
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
               <tr className="border-b">
+                {/* Sticky columns */}
                 <th className="sticky left-0 z-20 bg-muted/90 px-2 py-2.5 w-8 text-left">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleSelectAll}
-                    className="rounded"
-                  />
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="rounded" />
                 </th>
                 <th className="sticky left-8 z-20 bg-muted/90 px-2 py-2.5 text-left font-medium whitespace-nowrap min-w-[120px]">Company</th>
                 <th className="sticky left-[152px] z-20 bg-muted/90 px-2 py-2.5 text-left font-medium whitespace-nowrap">Type</th>
+                {/* Scrollable columns */}
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Website</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Industry</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Emp.</th>
@@ -283,120 +268,93 @@ export default function HomePage() {
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Contact</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Role</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Email</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Phone</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">LinkedIn</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Source</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Status</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Payments Stack</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Crypto</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Est. Volume</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Priorities</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Priority</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap w-10"></th>
+                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Key VP</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {leads.map((lead) => {
                 const isSelected = selected.has(lead.id)
-                const isQualifying = qualifying.has(lead.id)
+                const isEnriching = enriching.has(lead.id)
                 const prioritiesExpanded = expandedPriorities.has(lead.id)
 
                 return (
-                  <tr
-                    key={lead.id}
-                    className={`hover:bg-muted/30 transition-colors ${isSelected ? 'bg-blue-50/50' : ''} ${isQualifying ? 'opacity-60' : ''}`}
+                  <tr key={lead.id}
+                    className={`hover:bg-muted/30 transition-colors ${isSelected ? 'bg-blue-50/50' : ''} ${isEnriching ? 'opacity-60' : ''}`}
                   >
+                    {/* Sticky cells */}
                     <td className={`sticky left-0 z-10 px-2 py-1.5 w-8 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
-                      {isQualifying ? (
-                        <Spinner />
-                      ) : (
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelect(lead.id)}
-                          className="rounded"
-                        />
+                      {isEnriching ? <Spinner /> : (
+                        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(lead.id)} className="rounded" />
                       )}
                     </td>
                     <td className={`sticky left-8 z-10 px-2 py-1.5 font-medium min-w-[120px] max-w-[160px] ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
                       <span className="truncate block" title={lead.company}>{lead.company}</span>
                     </td>
                     <td className={`sticky left-[152px] z-10 px-2 py-1.5 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
-                      <InlineSelect
-                        value={lead.lead_type}
-                        options={TYPE_OPTIONS}
-                        onChange={(v) => updateLeadField(lead.id, 'lead_type', v)}
-                      />
+                      <InlineSelect value={lead.lead_type} options={TYPE_OPTIONS} onChange={v => updateLeadField(lead.id, 'lead_type', v)} />
                     </td>
 
+                    {/* Scrollable cells */}
                     <td className="px-2 py-1.5 max-w-[120px]">
                       {lead.company_website ? (
-                        <a
-                          href={lead.company_website}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
                           className="text-blue-600 hover:underline truncate block max-w-[120px]"
-                          title={lead.company_website}
-                        >
+                          title={lead.company_website}>
                           {lead.company_website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
                         </a>
                       ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-2 py-1.5"><TruncatedCell text={lead.industry} /></td>
+                    <td className="px-2 py-1.5">
+                      <InlineSelect value={lead.industry} options={INDUSTRIES} onChange={v => updateLeadField(lead.id, 'industry', v)} />
+                    </td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{lead.company_size_employees || <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{lead.company_size_revenue || <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-2 py-1.5"><TruncatedCell text={lead.contact_name} /></td>
                     <td className="px-2 py-1.5"><TruncatedCell text={lead.contact_role} /></td>
                     <td className="px-2 py-1.5">
                       {lead.contact_email ? (
-                        <span className="truncate block max-w-[140px]" title={lead.contact_email}>{lead.contact_email}</span>
+                        <span className="flex items-center gap-1">
+                          <span
+                            className={`truncate max-w-[130px] ${lead.contact_email_inferred ? 'text-orange-500' : ''}`}
+                            title={lead.contact_email}
+                          >
+                            {lead.contact_email}
+                          </span>
+                          {lead.contact_email_inferred && (
+                            <span
+                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold cursor-help leading-none shrink-0"
+                              title="This email was AI-generated and may not be real. Verify before sending."
+                            >!</span>
+                          )}
+                        </span>
                       ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-2 py-1.5"><TruncatedCell text={lead.contact_phone} /></td>
                     <td className="px-2 py-1.5">
-                      {lead.contact_linkedin ? (
-                        <a
-                          href={lead.contact_linkedin}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline"
-                          title={lead.contact_linkedin}
-                        >
-                          LinkedIn
-                        </a>
-                      ) : <span className="text-muted-foreground">—</span>}
+                      {lead.contact_linkedin
+                        ? <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline" title={lead.contact_linkedin}>LinkedIn</a>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-2 py-1.5">
-                      <InlineSelect
-                        value={lead.lead_source}
-                        options={SOURCE_OPTIONS}
-                        onChange={(v) => updateLeadField(lead.id, 'lead_source', v)}
-                      />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineSelect
-                        value={lead.lead_status}
-                        options={STATUS_OPTIONS}
-                        colorMap={STATUS_COLORS}
-                        onChange={(v) => updateLeadField(lead.id, 'lead_status', v)}
-                      />
+                      <InlineSelect value={lead.lead_status} options={STATUS_OPTIONS} colorMap={STATUS_COLORS}
+                        onChange={v => updateLeadField(lead.id, 'lead_status', v)} />
                     </td>
                     <td className="px-2 py-1.5"><TruncatedCell text={lead.payments_stack} /></td>
                     <td className="px-2 py-1.5">
-                      <InlineSelect
-                        value={lead.crypto_capabilities}
-                        options={CRYPTO_OPTIONS}
-                        onChange={(v) => updateLeadField(lead.id, 'crypto_capabilities', v)}
-                      />
+                      <InlineSelect value={lead.crypto_capabilities} options={CRYPTO_OPTIONS}
+                        onChange={v => updateLeadField(lead.id, 'crypto_capabilities', v)} />
                     </td>
                     <td className="px-2 py-1.5"><TruncatedCell text={lead.estimated_yearly_volumes} /></td>
                     <td className="px-2 py-1.5 max-w-[160px]">
                       {lead.strategic_priorities ? (
-                        <button
-                          onClick={() => togglePriorityExpanded(lead.id)}
-                          className="text-left w-full"
-                          title={lead.strategic_priorities}
-                        >
+                        <button onClick={() => togglePriorityExpanded(lead.id)} className="text-left w-full" title={lead.strategic_priorities}>
                           <span className={`block text-xs ${prioritiesExpanded ? '' : 'truncate max-w-[150px]'}`}>
                             {lead.strategic_priorities}
                           </span>
@@ -407,21 +365,11 @@ export default function HomePage() {
                       ) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-2 py-1.5">
-                      <InlineSelect
-                        value={lead.lead_priority}
-                        options={PRIORITY_OPTIONS}
-                        colorMap={PRIORITY_COLORS}
-                        onChange={(v) => updateLeadField(lead.id, 'lead_priority', v)}
-                      />
+                      <InlineSelect value={lead.lead_priority} options={PRIORITY_OPTIONS} colorMap={PRIORITY_COLORS}
+                        onChange={v => updateLeadField(lead.id, 'lead_priority', v)} />
                     </td>
-                    <td className="px-2 py-1.5">
-                      <button
-                        onClick={() => openDraftForLead(lead)}
-                        className="text-xs px-2 py-1 rounded border hover:bg-muted transition-colors whitespace-nowrap"
-                        title="Draft email"
-                      >
-                        Draft
-                      </button>
+                    <td className="px-2 py-1.5 min-w-[140px]">
+                      <KeyVpCell value={lead.key_vp} />
                     </td>
                   </tr>
                 )
@@ -432,19 +380,12 @@ export default function HomePage() {
       </div>
 
       {showAddModal && (
-        <AddLeadModal
-          onClose={() => setShowAddModal(false)}
-          onAdded={(newLeads) => setLeads((prev) => [...newLeads, ...prev])}
-        />
+        <AddLeadModal onClose={() => setShowAddModal(false)} onAdded={newLeads => setLeads(prev => [...newLeads, ...prev])} />
       )}
 
       {panelLeads.length > 0 && (
-        <MessagePanel
-          leads={panelLeads}
-          index={panelIndex}
-          onNext={handlePanelNext}
-          onClose={handlePanelClose}
-        />
+        <MessagePanel leads={panelLeads} index={panelIndex}
+          onNext={() => setPanelIndex(i => i + 1)} onClose={handlePanelClose} />
       )}
     </div>
   )

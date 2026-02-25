@@ -17,7 +17,7 @@ export async function POST(
 
   const { data: message, error: msgError } = await supabase
     .from('messages')
-    .select('*, leads(*)')
+    .select('*')
     .eq('id', message_id)
     .single()
 
@@ -25,8 +25,17 @@ export async function POST(
     return NextResponse.json({ error: 'Message not found' }, { status: 404 })
   }
 
-  const lead = message.leads
-  if (!lead?.contact_email) {
+  const { data: lead, error: leadError } = await supabase
+    .from('leads')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (leadError || !lead) {
+    return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
+  }
+
+  if (!lead.contact_email) {
     return NextResponse.json({ error: 'Lead has no email address' }, { status: 400 })
   }
 

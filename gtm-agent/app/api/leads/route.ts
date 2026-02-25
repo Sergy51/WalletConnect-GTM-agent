@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
 export async function GET() {
@@ -13,8 +14,6 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
-
-  // Support both single lead and array of leads
   const leads = Array.isArray(body) ? body : [body]
 
   const rows = leads.map((lead) => ({
@@ -27,6 +26,7 @@ export async function POST(request: NextRequest) {
     contact_name: lead.contact_name || null,
     contact_role: lead.contact_role || null,
     contact_email: lead.contact_email || null,
+    contact_email_inferred: false,
     contact_phone: lead.contact_phone || null,
     contact_linkedin: lead.contact_linkedin || null,
     lead_source: lead.lead_source || null,
@@ -36,12 +36,24 @@ export async function POST(request: NextRequest) {
     estimated_yearly_volumes: lead.estimated_yearly_volumes || null,
     strategic_priorities: lead.strategic_priorities || null,
     lead_priority: lead.lead_priority || null,
+    key_vp: lead.key_vp || null,
     company_description: lead.company_description || null,
     walletconnect_value_prop: lead.walletconnect_value_prop || null,
   }))
 
   const { data, error } = await supabase.from('leads').insert(rows).select()
-
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data, { status: 201 })
+}
+
+export async function DELETE() {
+  // Fetch all IDs then delete — avoids needing unsafe "delete all" filter
+  const { data: all, error: fetchError } = await supabase.from('leads').select('id')
+  if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 })
+  if (!all || all.length === 0) return NextResponse.json({ deleted: 0 })
+
+  const ids = all.map((r: { id: string }) => r.id)
+  const { error } = await supabase.from('leads').delete().in('id', ids)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ deleted: ids.length })
 }

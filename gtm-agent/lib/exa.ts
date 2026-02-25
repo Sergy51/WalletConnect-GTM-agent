@@ -37,15 +37,41 @@ export async function searchCompanyNews(company: string, website?: string | null
   return results.map((r) => `- ${r.title}: ${r.text?.slice(0, 200) || ''}`).join('\n')
 }
 
-export async function searchForDecisionMakers(company: string, website: string | null, titles: string[]): Promise<string> {
+export async function searchForDecisionMakers(
+  company: string,
+  website: string | null,
+  titles: string[]
+): Promise<string> {
   if (!process.env.EXA_API_KEY) return ''
 
-  const titleQuery = titles.slice(0, 3).join(' OR ')
-  const query = website
-    ? `site:${website} team OR leadership OR about OR "${titleQuery}"`
-    : `"${company}" ${titleQuery} executive leadership team`
+  const titleQuery = titles.slice(0, 5).join(' OR ')
 
-  const results = await exaSearch(query)
-  if (results.length === 0) return ''
-  return results.map((r) => `[${r.title}]\n${r.text || ''}`).join('\n\n')
+  // Run two searches in parallel:
+  // 1. Company website's team/about/leadership pages
+  // 2. Broader web search for named executives at the company
+  const [siteResults, webResults] = await Promise.all([
+    website
+      ? exaSearch(`site:${website} team about leadership people executives`, {
+          num_results: 3,
+          use_autoprompt: false,
+          contents: { text: { max_characters: 1000 } },
+        })
+      : Promise.resolve([]),
+    exaSearch(`"${company}" (${titleQuery}) name email contact`, {
+      num_results: 3,
+      contents: { text: { max_characters: 800 } },
+    }),
+  ])
+
+  const seen = new Set<string>()
+  const allResults = [...siteResults, ...webResults].filter((r) => {
+    if (seen.has(r.url)) return false
+    seen.add(r.url)
+    return true
+  })
+
+  if (allResults.length === 0) return ''
+  return allResults
+    .map((r) => `[${r.title}] (${r.url})\n${r.text || ''}`)
+    .join('\n\n')
 }

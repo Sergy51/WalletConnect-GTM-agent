@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import { WC_VALUE_PROPS } from '@/lib/constants'
 import type { Lead, Message } from '@/types'
 
 interface MessagePanelProps {
@@ -12,6 +13,20 @@ interface MessagePanelProps {
   index: number
   onNext: () => void
   onClose: () => void
+}
+
+const VP_COLORS: Record<string, string> = {
+  'Lower Fees': 'bg-green-100 text-green-700',
+  'Instant Settlement': 'bg-blue-100 text-blue-700',
+  'Global Reach': 'bg-purple-100 text-purple-700',
+  'Zero Chargebacks': 'bg-red-100 text-red-700',
+  'Single API': 'bg-orange-100 text-orange-700',
+}
+
+const PRIORITY_COLORS: Record<string, string> = {
+  High: 'bg-red-100 text-red-700',
+  Medium: 'bg-yellow-100 text-yellow-700',
+  Low: 'bg-gray-100 text-gray-600',
 }
 
 export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProps) {
@@ -24,17 +39,12 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
   const [followUp1Body, setFollowUp1Body] = useState('')
   const [followUp2Body, setFollowUp2Body] = useState('')
   const [followUp1Date, setFollowUp1Date] = useState(() => {
-    const d = new Date()
-    d.setDate(d.getDate() + 14)
-    return d.toISOString().slice(0, 10)
+    const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10)
   })
   const [followUp2Date, setFollowUp2Date] = useState(() => {
-    const d = new Date()
-    d.setDate(d.getDate() + 21)
-    return d.toISOString().slice(0, 10)
+    const d = new Date(); d.setDate(d.getDate() + 21); return d.toISOString().slice(0, 10)
   })
 
-  // Auto-generate message on mount / when lead changes
   useEffect(() => {
     if (!lead) return
     setMessage(null)
@@ -64,6 +74,8 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
       setMessage(msg)
       setSubject(msg.subject || '')
       setBody(msg.body || '')
+      setFollowUp1Body(msg.follow_up_1_body || '')
+      setFollowUp2Body(msg.follow_up_2_body || '')
     } catch {
       toast.error('Failed to generate message')
     } finally {
@@ -75,13 +87,11 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
     if (!message) return
     setSending(true)
     try {
-      // Update the message with any edits first
       await fetch(`/api/update-message/${message.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject,
-          body,
+          subject, body,
           follow_up_1_due: followUp1Date,
           follow_up_2_due: followUp2Date,
           follow_up_1_body: followUp1Body,
@@ -100,11 +110,8 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
         return
       }
       toast.success(`Email sent to ${lead.contact_email}`)
-      if (index < leads.length - 1) {
-        onNext()
-      } else {
-        onClose()
-      }
+      if (index < leads.length - 1) onNext()
+      else onClose()
     } finally {
       setSending(false)
     }
@@ -112,11 +119,8 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
 
   if (!lead) return null
 
-  const priorityColors: Record<string, string> = {
-    High: 'bg-red-100 text-red-700',
-    Medium: 'bg-yellow-100 text-yellow-700',
-    Low: 'bg-gray-100 text-gray-600',
-  }
+  const keyVps = lead.key_vp?.split(',').map(v => v.trim()).filter(Boolean) || []
+  const relevantVpDetails = WC_VALUE_PROPS.filter(v => keyVps.includes(v.key))
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -130,9 +134,7 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
           <div className="flex items-center gap-3">
             <span className="font-semibold">{lead.company}</span>
             {leads.length > 1 && (
-              <span className="text-sm text-muted-foreground">
-                Lead {index + 1} of {leads.length}
-              </span>
+              <span className="text-sm text-muted-foreground">Lead {index + 1} of {leads.length}</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -148,51 +150,27 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
           {/* Left: Company info */}
           <div className="w-[35%] border-r p-5 overflow-y-auto shrink-0 space-y-4">
             <div>
-              <div className="text-xs uppercase text-muted-foreground font-medium mb-2">Company</div>
+              <div className="text-xs uppercase text-muted-foreground font-medium mb-1">Company</div>
               <div className="font-medium">{lead.company}</div>
               {lead.company_website && (
-                <a
-                  href={lead.company_website}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-blue-600 hover:underline truncate block"
-                >
+                <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
+                  className="text-sm text-blue-600 hover:underline truncate block">
                   {lead.company_website}
                 </a>
               )}
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-sm">
-              {lead.lead_type && (
-                <div>
-                  <div className="text-xs text-muted-foreground">Type</div>
-                  <div>{lead.lead_type}</div>
-                </div>
-              )}
-              {lead.industry && (
-                <div>
-                  <div className="text-xs text-muted-foreground">Industry</div>
-                  <div>{lead.industry}</div>
-                </div>
-              )}
-              {lead.company_size_employees && (
-                <div>
-                  <div className="text-xs text-muted-foreground">Employees</div>
-                  <div>{lead.company_size_employees}</div>
-                </div>
-              )}
-              {lead.company_size_revenue && (
-                <div>
-                  <div className="text-xs text-muted-foreground">Revenue</div>
-                  <div>{lead.company_size_revenue}</div>
-                </div>
-              )}
+              {lead.lead_type && <div><div className="text-xs text-muted-foreground">Type</div><div>{lead.lead_type}</div></div>}
+              {lead.industry && <div><div className="text-xs text-muted-foreground">Industry</div><div>{lead.industry}</div></div>}
+              {lead.company_size_employees && <div><div className="text-xs text-muted-foreground">Employees</div><div>{lead.company_size_employees}</div></div>}
+              {lead.company_size_revenue && <div><div className="text-xs text-muted-foreground">Revenue</div><div>{lead.company_size_revenue}</div></div>}
             </div>
 
             {lead.lead_priority && (
               <div>
                 <div className="text-xs text-muted-foreground mb-1">Priority</div>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${priorityColors[lead.lead_priority] || ''}`}>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${PRIORITY_COLORS[lead.lead_priority] || ''}`}>
                   {lead.lead_priority}
                 </span>
               </div>
@@ -212,21 +190,50 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
               </div>
             )}
 
-            {lead.walletconnect_value_prop && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">WC Pay Value Prop</div>
+            {/* WC Pay Value Prop */}
+            <div>
+              <div className="text-xs uppercase text-muted-foreground font-medium mb-2">WC Pay Value Prop</div>
+              {keyVps.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {keyVps.map(vp => (
+                    <span key={vp} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${VP_COLORS[vp] || 'bg-gray-100 text-gray-600'}`}>
+                      {vp}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {relevantVpDetails.length > 0 && (
+                <div className="space-y-2 mb-2">
+                  {relevantVpDetails.map(vp => (
+                    <div key={vp.key} className="text-sm">
+                      <span className="font-medium">{vp.key}:</span>{' '}
+                      <span className="text-muted-foreground">{vp.description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lead.walletconnect_value_prop && (
                 <p className="text-sm leading-relaxed text-muted-foreground">{lead.walletconnect_value_prop}</p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Right: Message editor */}
           <div className="flex-1 p-5 overflow-y-auto space-y-4">
-            {!lead.contact_email && (
-              <div className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
-                No email address set for this lead. Add one before sending.
+            {/* Recipient info */}
+            <div className="flex items-center gap-3 px-3 py-2.5 bg-muted/40 rounded-lg text-sm">
+              <span className="text-muted-foreground shrink-0">To:</span>
+              <div className="flex items-center gap-2 min-w-0">
+                {lead.contact_name && (
+                  <span className="font-medium truncate">{lead.contact_name}</span>
+                )}
+                {lead.contact_email ? (
+                  <span className="text-muted-foreground truncate">&lt;{lead.contact_email}&gt;</span>
+                ) : (
+                  <span className="text-amber-600 text-xs">No email — add one before sending</span>
+                )}
               </div>
-            )}
+            </div>
 
             {generating ? (
               <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
@@ -237,68 +244,36 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
               <>
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground uppercase">Subject</label>
-                  <Input
-                    value={subject}
-                    onChange={(e) => setSubject(e.target.value)}
-                    placeholder="Email subject"
-                  />
+                  <Input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Email subject" />
                 </div>
 
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground uppercase">Body</label>
-                  <Textarea
-                    value={body}
-                    onChange={(e) => setBody(e.target.value)}
-                    rows={6}
-                    placeholder="Email body"
-                  />
+                  <Textarea value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder="Email body" />
                 </div>
 
-                <div className="border-t pt-4 space-y-3">
+                <div className="border-t pt-4 space-y-2">
                   <div className="text-xs font-medium text-muted-foreground uppercase">Follow-up 1 (+14 days)</div>
-                  <Input
-                    type="date"
-                    value={followUp1Date}
-                    onChange={(e) => setFollowUp1Date(e.target.value)}
-                    className="w-40"
-                  />
-                  <Textarea
-                    value={followUp1Body}
-                    onChange={(e) => setFollowUp1Body(e.target.value)}
-                    rows={3}
-                    placeholder="Follow-up 1 message (auto-generated after send)"
-                  />
+                  <Input type="date" value={followUp1Date} onChange={e => setFollowUp1Date(e.target.value)} className="w-40" />
+                  <Textarea value={followUp1Body} onChange={e => setFollowUp1Body(e.target.value)} rows={3}
+                    placeholder="Follow-up 1 message" />
                 </div>
 
-                <div className="border-t pt-4 space-y-3">
+                <div className="border-t pt-4 space-y-2">
                   <div className="text-xs font-medium text-muted-foreground uppercase">Follow-up 2 (+21 days)</div>
-                  <Input
-                    type="date"
-                    value={followUp2Date}
-                    onChange={(e) => setFollowUp2Date(e.target.value)}
-                    className="w-40"
-                  />
-                  <Textarea
-                    value={followUp2Body}
-                    onChange={(e) => setFollowUp2Body(e.target.value)}
-                    rows={3}
-                    placeholder="Follow-up 2 message (auto-generated after send)"
-                  />
+                  <Input type="date" value={followUp2Date} onChange={e => setFollowUp2Date(e.target.value)} className="w-40" />
+                  <Textarea value={followUp2Body} onChange={e => setFollowUp2Body(e.target.value)} rows={3}
+                    placeholder="Follow-up 2 message" />
                 </div>
 
                 <div className="pt-2">
-                  <Button
-                    onClick={sendEmail}
-                    disabled={sending || !message || !lead.contact_email}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    {sending ? 'Sending...' : `Send Email${lead.contact_email ? ` to ${lead.contact_email}` : ''}`}
+                  <Button onClick={sendEmail} disabled={sending || !message || !lead.contact_email}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                    {sending ? 'Sending...' : 'Send Email'}
                   </Button>
                   {!message && !generating && (
-                    <button
-                      onClick={generateMessage}
-                      className="w-full mt-2 text-sm text-muted-foreground hover:text-foreground underline"
-                    >
+                    <button onClick={generateMessage}
+                      className="w-full mt-2 text-sm text-muted-foreground hover:text-foreground underline">
                       Regenerate draft
                     </button>
                   )}

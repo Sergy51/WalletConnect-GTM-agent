@@ -21,6 +21,7 @@ export interface Lead {
   contact_name: string | null
   contact_role: string | null
   contact_email: string | null
+  contact_email_inferred: boolean
   contact_phone: string | null
   contact_linkedin: string | null
   // Qualification
@@ -31,6 +32,7 @@ export interface Lead {
   estimated_yearly_volumes: string | null
   strategic_priorities: string | null
   lead_priority: 'High' | 'Medium' | 'Low' | null
+  key_vp: string | null
   // Internal
   company_description: string | null
   walletconnect_value_prop: string | null
