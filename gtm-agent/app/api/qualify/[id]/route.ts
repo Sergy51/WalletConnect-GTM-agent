@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { anthropic, CLAUDE_MODEL, WC_PAY_SYSTEM_PROMPT } from '@/lib/claude'
 import { searchCompanyNews, searchForDecisionMakers, findCompanyWebsite } from '@/lib/exa'
+import { searchCompanyPriorities } from '@/lib/perplexity'
+import { searchRelevantTweets, type TweetResult } from '@/lib/twitter'
+import { searchPersonEmail } from '@/lib/apollo'
 import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
 
 // Contact priority is based on company_size_employees (headcount), NOT company_size_revenue.
@@ -121,10 +124,12 @@ function generateFallbackEmail(name: string | null, website: string | null, comp
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const body = await request.json().catch(() => ({}))
+  const useApollo: boolean = body.useApollo === true
 
   const { data: lead, error: leadError } = await supabase
     .from('leads').select('*').eq('id', id).single()
@@ -142,8 +147,16 @@ export async function POST(
       }
     }
 
-    // ─── Phase 1: Company news ────────────────────────────────────────────────
-    const { context: companyNews, sources: newsSources } = await searchCompanyNews(lead.company, resolvedWebsite)
+    // ─── Phase 1: Company news + Perplexity + Twitter (parallel) ──────────────
+    const [{ context: companyNews, sources: newsSources }, perplexityPriorities, tweetSummaries]: [
+      Awaited<ReturnType<typeof import('@/lib/exa').searchCompanyNews>>,
+      string[],
+      TweetResult[],
+    ] = await Promise.all([
+      searchCompanyNews(lead.company, resolvedWebsite),
+      searchCompanyPriorities(lead.company, resolvedWebsite),
+      searchRelevantTweets(lead.company, lead.contact_name, lead.secondary_contact_name),
+    ])
 
     // ─── Phase 2: Determine type + size (skip if already known) ───────────────
     // Use the known values first so manual overrides are respected.
@@ -250,7 +263,13 @@ OTHER FIELDS:
   "Medium" = strategic priorities do not mention crypto or digital assets
 - company_size_employees: confirm or correct (${resolvedSize ?? 'Unknown'}) — '1-10','10-100','100-500','500-5000','5000+'
 - company_size_revenue: '<$1M','$1-10M','$10-100M','$100-500M','$500M+'
-- strategic_priorities: fill if inferable
+- strategic_priorities: Return a JSON object with this exact structure:
+  {
+    "news_and_press": ["bullet 1 from news context", "bullet 2"],
+    "company_content": [],
+    "social_media": []
+  }
+  Extract 2-4 concise bullets from the news context above into "news_and_press". Leave "company_content" and "social_media" as empty arrays.
 - walletconnect_value_prop: 2–3 sentences on why WC Pay fits this specific company
 
 Return ONLY valid JSON (null for unknown fields; key_vp always required):
@@ -259,7 +278,7 @@ Return ONLY valid JSON (null for unknown fields; key_vp always required):
   "industry": string | null,
   "company_size_employees": string | null,
   "company_size_revenue": string | null,
-  "strategic_priorities": string | null,
+  "strategic_priorities": { "news_and_press": string[], "company_content": string[], "social_media": string[] },
   "lead_priority": "High" | "Medium" | null,
   "key_vp": string,
   "contact_name": string | null,
@@ -280,7 +299,8 @@ No markdown, no explanation, just the JSON object.`
     })
 
     const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
-    let enriched: Record<string, string | null>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let enriched: Record<string, any>
     try {
       enriched = JSON.parse(responseText)
     } catch {
@@ -291,10 +311,83 @@ No markdown, no explanation, just the JSON object.`
 
     if (!enriched.key_vp) enriched.key_vp = 'Lower Fees, Global Reach'
 
+    // Normalize strategic_priorities into the structured JSON string format.
+    // Claude may return the field as a JSON object (structured) or a plain string (legacy).
+    // Either way, we stringify it into the { news_and_press, company_content, social_media } shape.
+    if (enriched.strategic_priorities != null) {
+      const raw = enriched.strategic_priorities
+      if (typeof raw === 'string') {
+        // Check if it's already a JSON string of the structured format
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            enriched.strategic_priorities = JSON.stringify({
+              news_and_press: Array.isArray(parsed.news_and_press) ? parsed.news_and_press : [],
+              company_content: Array.isArray(parsed.company_content) ? parsed.company_content : [],
+              social_media: Array.isArray(parsed.social_media) ? parsed.social_media : [],
+            })
+          } else {
+            // Plain string — wrap it
+            enriched.strategic_priorities = JSON.stringify({
+              news_and_press: [raw],
+              company_content: [],
+              social_media: [],
+            })
+          }
+        } catch {
+          // Not valid JSON — treat as plain string
+          enriched.strategic_priorities = JSON.stringify({
+            news_and_press: [raw],
+            company_content: [],
+            social_media: [],
+          })
+        }
+      } else if (typeof raw === 'object') {
+        // Claude returned a parsed object directly (from JSON.parse of the full response)
+        const obj = raw as Record<string, unknown>
+        enriched.strategic_priorities = JSON.stringify({
+          news_and_press: Array.isArray(obj.news_and_press) ? obj.news_and_press : [],
+          company_content: Array.isArray(obj.company_content) ? obj.company_content : [],
+          social_media: Array.isArray(obj.social_media) ? obj.social_media : [],
+        })
+      }
+    }
+
+    // Merge Perplexity + Twitter results into structured priorities
+    if ((perplexityPriorities.length > 0 || tweetSummaries.length > 0) && enriched.strategic_priorities) {
+      try {
+        const sp = JSON.parse(enriched.strategic_priorities as string)
+        if (perplexityPriorities.length > 0) sp.company_content = perplexityPriorities
+        if (tweetSummaries.length > 0) sp.social_media = tweetSummaries
+        enriched.strategic_priorities = JSON.stringify(sp)
+      } catch { /* ignore merge failure */ }
+    }
+
     // Determine whether the email is real (found by Claude) or generated by us.
     // Claude is instructed to return null if it doesn't find a real address,
     // so any email we add here via generateFallbackEmail is definitively inferred.
     let emailInferred = false
+    let emailVerified = false
+
+    // Apollo lookup — try to find a verified email before falling back to generated one
+    if (!lead.contact_email && !enriched.contact_email && useApollo) {
+      const contactName = enriched.contact_name || lead.contact_name
+      if (contactName) {
+        const domain = getDomain(resolvedWebsite || lead.company_website)
+        const linkedinUrl = enriched.contact_linkedin || lead.contact_linkedin
+        const apolloResult = await searchPersonEmail(contactName, lead.company, domain, linkedinUrl)
+        if (apolloResult?.email) {
+          enriched.contact_email = apolloResult.email
+          emailInferred = false
+          emailVerified = true  // Apollo confirmed this email
+          // Also grab LinkedIn URL if we don't have one
+          if (!lead.contact_linkedin && !enriched.contact_linkedin && apolloResult.linkedin_url) {
+            enriched.contact_linkedin = apolloResult.linkedin_url
+          }
+        }
+      }
+    }
+
     if (!lead.contact_email && !enriched.contact_email) {
       enriched.contact_email = generateFallbackEmail(
         enriched.contact_name || lead.contact_name,
@@ -317,8 +410,9 @@ No markdown, no explanation, just the JSON object.`
     for (const field of contactFields) {
       if (!lead[field] && enriched[field] != null) updates[field] = enriched[field]
     }
-    // Always write the inferred flag so it reflects this enrichment run
+    // Always write the inferred/verified flags so they reflect this enrichment run
     updates.contact_email_inferred = emailInferred
+    updates.contact_email_verified = emailVerified
     // Always overwrite news sources with latest Exa results
     if (newsSources.length > 0) updates.news_sources = JSON.stringify(newsSources)
 

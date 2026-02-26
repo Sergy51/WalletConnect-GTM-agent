@@ -271,6 +271,8 @@ export default function HomePage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [panelLeads, setPanelLeads] = useState<Lead[]>([])
   const [panelIndex, setPanelIndex] = useState(0)
+  const [showApolloDialog, setShowApolloDialog] = useState(false)
+  const apolloEnabled = process.env.NEXT_PUBLIC_APOLLO_ENABLED === 'true'
 
   const fetchLeads = useCallback(async () => {
     try {
@@ -315,7 +317,22 @@ export default function HomePage() {
     }
   }
 
-  async function enrichLeads() {
+  function handleEnrichClick() {
+    const toEnrich = selected.size > 0
+      ? leads.filter(l => selected.has(l.id))
+      : leads.filter(l => l.lead_status === 'New')
+
+    if (toEnrich.length === 0) { toast.info('No leads to enrich'); return }
+
+    if (apolloEnabled) {
+      setShowApolloDialog(true)
+    } else {
+      enrichLeads(false)
+    }
+  }
+
+  async function enrichLeads(useApollo: boolean) {
+    setShowApolloDialog(false)
     const toEnrich = selected.size > 0
       ? leads.filter(l => selected.has(l.id))
       : leads.filter(l => l.lead_status === 'New')
@@ -328,7 +345,11 @@ export default function HomePage() {
     const results: Array<{ id: string; success: boolean; error?: string }> = []
     for (const id of ids) {
       try {
-        const res = await fetch(`/api/qualify/${id}`, { method: 'POST' })
+        const res = await fetch(`/api/qualify/${id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ useApollo }),
+        })
         if (!res.ok) {
           const err = await res.json().catch(() => ({}))
           results.push({ id, success: false, error: err.error || `HTTP ${res.status}` })
@@ -364,6 +385,20 @@ export default function HomePage() {
     }
   }
 
+  async function deleteSelectedLeads() {
+    const count = selected.size
+    if (!window.confirm(`Delete ${count} selected lead${count !== 1 ? 's' : ''}? This cannot be undone.`)) return
+    const ids = [...selected]
+    try {
+      await Promise.all(ids.map(id => fetch(`/api/update-lead/${id}`, { method: 'DELETE' }).catch(() => null)))
+      setLeads(prev => prev.filter(l => !selected.has(l.id)))
+      setSelected(new Set())
+      toast.success(`Deleted ${count} lead${count !== 1 ? 's' : ''}`)
+    } catch {
+      toast.error('Failed to delete leads')
+    }
+  }
+
   function openDraftPanel() {
     const selectedLeads = leads.filter(l => selected.has(l.id))
     if (selectedLeads.length === 0) return
@@ -393,7 +428,7 @@ export default function HomePage() {
           <Button variant="outline" size="sm" onClick={toggleSelectAll}>
             {allSelected ? 'Deselect All' : 'Select All'}
           </Button>
-          <Button variant="outline" size="sm" onClick={enrichLeads} disabled={enriching.size > 0}>
+          <Button variant="outline" size="sm" onClick={handleEnrichClick} disabled={enriching.size > 0}>
             {enriching.size > 0
               ? <span className="flex items-center gap-1.5"><Spinner /> Enriching...</span>
               : selected.size > 0 ? `Enrich (${selected.size})` : 'Enrich New'}
@@ -402,9 +437,10 @@ export default function HomePage() {
             Draft Emails{selected.size > 0 ? ` (${selected.size})` : ''}
           </Button>
           <Button size="sm" onClick={() => setShowAddModal(true)}>Add Lead</Button>
-          <Button size="sm" variant="outline" onClick={deleteAllLeads}
+          <Button size="sm" variant="outline"
+            onClick={selected.size > 0 ? deleteSelectedLeads : deleteAllLeads}
             className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
-            Delete All
+            {selected.size > 0 ? `Delete (${selected.size})` : 'Delete All'}
           </Button>
         </div>
       </div>
@@ -508,6 +544,12 @@ export default function HomePage() {
                             title="This email was AI-generated and may not be real. Verify before sending."
                           >!</span>
                         )}
+                        {lead.contact_email_verified && lead.contact_email && (
+                          <span
+                            className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-green-100 text-green-600 text-[10px] font-bold cursor-help leading-none shrink-0"
+                            title="This email was verified by Apollo.io."
+                          >✓</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-2 py-1.5">
@@ -534,6 +576,21 @@ export default function HomePage() {
           </table>
         )}
       </div>
+
+      {showApolloDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-background rounded-lg shadow-lg p-6 max-w-sm mx-4">
+            <div className="font-medium text-sm mb-1">Use Apollo.io for email lookup?</div>
+            <p className="text-xs text-muted-foreground mb-4">
+              Apollo can find verified email addresses using API credits. Each enrichment uses at most 1 API call. This choice will apply to all leads in this batch.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => enrichLeads(false)}>Skip Apollo</Button>
+              <Button size="sm" onClick={() => enrichLeads(true)}>Use Apollo</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAddModal && (
         <AddLeadModal onClose={() => setShowAddModal(false)} onAdded={newLeads => setLeads(prev => sortLeads([...newLeads, ...prev]))} />

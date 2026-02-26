@@ -22,6 +22,7 @@ export interface Lead {
   contact_role: string | null
   contact_email: string | null
   contact_email_inferred: boolean
+  contact_email_verified: boolean
   contact_linkedin: string | null
   // Qualification
   lead_source: 'Inbound' | 'Outbound' | 'Referral' | 'Event' | null
@@ -54,6 +55,17 @@ export interface Message {
   follow_up_1_body: string | null
   follow_up_2_body: string | null
   created_at: string
+}
+
+export interface SocialMediaItem {
+  text: string
+  url: string
+}
+
+export interface StrategicPriorities {
+  news_and_press: string[]      // From Exa news search
+  company_content: string[]     // From Perplexity
+  social_media: SocialMediaItem[] // From Twitter/Exa — { text, url }
 }
 
 export interface OutreachLog {

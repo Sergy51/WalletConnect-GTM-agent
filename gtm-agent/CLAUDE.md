@@ -3,7 +3,7 @@
 ## Project Overview
 
 - **What it does:** AI-powered B2B outbound sales pipeline for WalletConnect Pay — enriches leads, finds decision-makers, drafts personalized cold emails, and sends them via Resend
-- **Stack:** Next.js 16.1.6 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui (New York style), Supabase (Postgres), Anthropic Claude (`claude-sonnet-4-5`), Exa.ai, Resend, PapaParse
+- **Stack:** Next.js 16.1.6 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui (New York style), Supabase (Postgres), Anthropic Claude (`claude-sonnet-4-5`), Exa.ai, Resend, PapaParse, Apollo.io, Perplexity
 - **Architecture:** Single-page Next.js app; no routing — `app/page.tsx` is the entire UI. API routes in `app/api/`. No auth.
 
 ---
@@ -11,25 +11,64 @@
 ## Key Decisions & Conventions
 
 ### Coding style
-- TypeScript strict mode; no `any`
+- TypeScript strict mode; no `any` (except `enriched` in qualify route which uses `Record<string, any>` to handle Claude returning nested objects)
 - API routes use `NextRequest` / `NextResponse` with `params: Promise<{ id: string }>`
 - Client components at the top of the file with `'use client'`; server-only logic in `app/api/`
 - Inline helper components defined inside `page.tsx` (e.g. `InlineSelect`, `TruncatedCell`, `KeyVpCell`, `Spinner`)
 
 ### Naming
 - DB columns: `snake_case` — `contact_name`, `lead_type`, `company_size_employees`
-- TS interfaces: `PascalCase` — `Lead`, `Message`, `OutreachLog`
+- TS interfaces: `PascalCase` — `Lead`, `Message`, `OutreachLog`, `StrategicPriorities`
 - API routes: REST-style (`/api/leads`, `/api/qualify/[id]`, `/api/generate-message/[id]`)
 
 ### Enrichment pipeline (`/api/qualify/[id]`)
-Five sequential phases per lead:
+Six phases per lead (Phase 1 runs three sources in parallel):
 0. **Website discovery** — if `company_website` is null, Exa finds the official site and saves it before proceeding
-1. **News search** — Exa fetches payments-relevant company news (90 days); sources stored as JSON in `news_sources`
+1. **News + Perplexity + Twitter (parallel)** — all three run concurrently:
+   - Exa news search → `news_sources` + `companyNews` context for Claude
+   - Perplexity `sonar` model → `company_content` array in `strategic_priorities`
+   - Twitter/X via Exa (`includeDomains: ['twitter.com','x.com','linkedin.com']`) → `social_media` array
 2. **Type + size classification** — cheap Claude call (120 tokens) → `lead_type` + `company_size_employees`; skipped if both already set
 3. **Contact search** — two-phase Exa search using `getPrioritizedTitles(type, size)`; only runs when `contact_name` is null
-4. **Full enrichment** — single Claude call writes all remaining fields; status → `Enriched`
+4. **Full enrichment** — single Claude call writes all remaining fields; `strategic_priorities` returned as structured JSON `{ news_and_press, company_content, social_media }`; status → `Enriched`
+4b. **Apollo lookup (optional)** — if `useApollo=true` in request body and no email found yet, calls Apollo People Match. Verified emails set `contact_email_inferred = false`, `contact_email_verified = true`.
 
 **Why two-phase classification:** Phase 2 is cheap; it gates Phase 3 so we search for the right roles before spending Exa credits on the wrong titles.
+
+### Strategic priorities — structured JSON format
+`strategic_priorities` is stored as a JSON string in the DB (text column). Shape:
+```json
+{
+  "news_and_press": ["bullet from Exa news", "..."],
+  "company_content": ["bullet from Perplexity", "..."],
+  "social_media": [{ "text": "cleaned text", "url": "https://..." }]
+}
+```
+- `news_and_press`: 2–4 bullets extracted by Claude from Exa news context
+- `company_content`: 3–5 bullets from Perplexity `sonar` search — focuses on payments/fintech/crypto
+- `social_media`: `{ text, url }` objects from Twitter/X/LinkedIn via Exa — strictly filtered to social domains only
+- Legacy leads with a flat string still render correctly (backward-compatible fallback in both UI and email generation)
+- **Social media is NOT passed to the email drafting agent** — tweet content is too noisy; only `news_and_press` and `company_content` feed the email prompt
+
+### Apollo People Match (`lib/apollo.ts`)
+- Endpoint: `POST https://api.apollo.io/api/v1/people/match` with params as **URL query string** (not JSON body)
+- Key params: `name` (full name), `organization_name`, `domain`, `reveal_personal_emails=true`
+- Pass `linkedin_url` if available — most reliable identifier
+- `reveal_personal_emails=true` is required; without it Apollo withholds emails even if they exist
+- Free tier: 60 API calls/hour, 10,000 email credits/year. API key plan must support email reveal — free tier API keys may not reveal emails despite the parameter
+- `email_status: 'unavailable'` = Apollo has the person but no verified work email. Falls through to generated fallback.
+- `email_status: null` with a sparse record (no title, no linkedin) = matched wrong/incomplete record; likely a name disambiguation issue
+
+### Perplexity search (`lib/perplexity.ts`)
+- Model: `sonar` (search-enabled)
+- Prompt asks for 3–5 specific strategic priority bullets related to payments/fintech/digital transformation/crypto
+- Returns `string[]`; gracefully returns `[]` on failure or missing `PERPLEXITY_API_KEY`
+
+### Twitter/social search (`lib/twitter.ts`)
+- Uses existing `EXA_API_KEY` — no new credentials needed
+- `includeDomains: ['twitter.com', 'x.com', 'linkedin.com']` — but Exa doesn't always respect this strictly, so results are **post-filtered** by `isSocialDomain()` to reject anything not from those three domains
+- LinkedIn posts are often login-walled — `cleanText()` detects "Agree & Join LinkedIn" boilerplate and uses the article title instead
+- Returns `TweetResult[]` = `{ text: string, url: string }[]`
 
 ### Contact search — two-phase Exa strategy (`lib/exa.ts → searchForDecisionMakers`)
 - **Phase A** — 3 parallel searches:
@@ -43,8 +82,7 @@ Five sequential phases per lead:
 - Query is payments-focused: `"Company" payments crypto digital assets stablecoin checkout partnerships product launch news`
 - Fetches 6 candidates, filters with `isGenericUrl()`, takes up to 3 specific articles
 - `isGenericUrl` drops root domains, category pages (`/news`, `/blog`, `/en/news`), LinkedIn company profiles — keeps specific article URLs, tweets, LinkedIn posts
-- Stored as JSON string in `leads.news_sources`; displayed as pill links in the message panel
-- LinkedIn posts and tweets are allowed (not excluded)
+- Stored as JSON string in `leads.news_sources`; displayed as pill links under "News & Press Releases" in the message panel
 
 ### Contact targeting (`getPrioritizedTitles`)
 - Separate role hierarchies for PSP and Merchant leads
@@ -53,16 +91,18 @@ Five sequential phases per lead:
 - Fallback: walks down the list if higher-priority roles aren't found
 
 ### Email generation
-- Follows `/Users/sergio/Documents/Code/WalletConnect/email_generation_guidelines.md` — 6-part structure: subject → opening (specific) → value bridge → credibility signal → CTA → sign-off as "Sergio Sanchez, Partnerships Director, WalletConnect"
+- Sign-off: "Sergio Sanchez, Partnerships Lead, WalletConnect" (note: **Lead**, not Director)
+- 6-part structure: subject → opening (specific) → value bridge → credibility signal → CTA → sign-off
 - Under 150 words; opening must reference a specific real milestone from news
 - Includes 3 few-shot examples in the prompt (Adyen PSP, Outpayce PSP Travel, Gucci Merchant)
 - Banned openers: "I hope this finds you well", "I wanted to reach out"
-- Insert first, then update follow_up fields separately (non-critical — see DB note below)
+- Strategic intel fed to email: `news_and_press` + `company_content` only. Social media excluded (too noisy).
+- Instruction: "pick the SINGLE most relevant data point — prefer payments/crypto/digital assets/partnerships"
 
-### Email inferred flag
-- Claude is instructed to return `null` for `contact_email` if not found
-- Code generates `firstname.lastname@domain` fallback and sets `contact_email_inferred = true`
-- Table shows inferred emails in orange with an `!` badge
+### Email flags (`contact_email_inferred`, `contact_email_verified`)
+- `contact_email_inferred = true` + orange `!` badge → AI-generated `firstname.lastname@domain` fallback
+- `contact_email_verified = true` + green `✓` badge → verified by Apollo People Match
+- Neither flag → email found by Claude in source text (press releases, team pages)
 
 ### Key VP (`key_vp` column)
 - Stored as comma-separated string e.g. `"Lower Fees, Global Reach"`
@@ -85,16 +125,21 @@ Five sequential phases per lead:
 
 ### Working
 - Single-page table UI with inline editing for all fields; company name click opens message panel
-- Add Lead modal: manual form (upfront: Company, Website, Contact, Role, Email; more fields: Type, Industry, Employees, Revenue, LinkedIn, Key VP) + CSV upload with column mapping
-- Enrichment pipeline (5-phase): website → news → classify → contacts → full enrich
+- Add Lead modal: manual form + CSV upload with column mapping
+- Enrichment pipeline (6-phase): website → news+Perplexity+Twitter → classify → contacts → full enrich → Apollo
+- Apollo.io email lookup with UI dialog (single + batch); green ✓ badge for verified emails
+- Perplexity strategic priorities search (company_content)
+- Twitter/LinkedIn social search via Exa (social_media) — displayed as source pills only
+- Structured `strategic_priorities` JSON with three collapsible sections in message panel
 - Two-phase LinkedIn URL discovery (name extraction → targeted profile search)
-- Payments-focused news with generic URL filtering; sources displayed as pill links in panel
+- Payments-focused news with generic URL filtering; sources as pill links under News & Press Releases
 - Secondary contact fields in message panel (name, email, LinkedIn) — manual only
 - Tiered decision-maker targeting by lead type and company size
-- Message generation with 6-part email structure + follow-up drafts; enrich button in panel for New leads
+- Message generation with 6-part email structure + follow-up drafts
 - Email sending via Resend; lead status → `Contacted` on send
-- Delete All with confirmation
-- Batch enrich (sequential, per-row spinner feedback)
+- Delete All / Delete selected (N) with confirmation
+- Batch enrich (sequential, per-row spinner feedback) with optional Apollo dialog
+- Apollo dialog shown once for batch; choice applied to all leads in the run
 - Leads sorted by funnel stage then alphabetically
 
 ### Pending DB migrations
@@ -107,6 +152,9 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS secondary_contact_linkedin text;
 
 -- News sources (JSON array stored as text)
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS news_sources text;
+
+-- Apollo verified email flag
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_email_verified boolean DEFAULT false;
 
 -- Follow-up scheduling
 ALTER TABLE messages
@@ -122,18 +170,23 @@ ALTER TABLE messages
 - Resend is on `onboarding@resend.dev` (free domain) — domain verification needed for production
 - `recharts` is installed but unused
 - `scripts/seed.ts` still exists but is no longer wired to any UI
+- Twitter/X social search returns limited results — Exa's domain filtering for twitter.com/x.com is unreliable (results often come from news sites despite `includeDomains`); post-filtering rejects non-social domains but means the section is often empty
 
 ---
 
 ## Next Steps
 
-1. **Apollo API for contact enrichment** — `qualify/[id]` has `// TODO: if EXA contact search returns no results, fall back to Apollo API`. Implement Apollo People Search when Exa returns no contact info. Env var: `APOLLO_API_KEY`. Apollo returns verified emails and LinkedIn URLs — much more reliable than Exa for this purpose.
+1. ~~**Apollo API for contact enrichment**~~ — DONE. Apollo People Match integrated. Green ✓ badge for verified emails. Apollo dialog for single and batch enrich. Env vars: `APOLLO_API_KEY`, `NEXT_PUBLIC_APOLLO_ENABLED=true`.
 
-2. **Follow-ups tab** — build a proper follow-up management view: list all sent leads with `follow_up_1_due` / `follow_up_2_due` dates, ability to preview/edit follow-up copy, and a send button per follow-up. Also remove the redundant Claude call in the send route (see tech debt above).
+2. ~~**Perplexity + Twitter enrichment**~~ — DONE. Both integrated into Phase 1 parallel call. Structured `strategic_priorities` JSON. Collapsible three-section display in message panel.
 
-3. **Tracking dashboard tab** — add a second tab (or section) with pipeline metrics: leads by status, conversion rates, emails sent vs opened, top industries/lead types. `recharts` is already installed and ready to use.
+3. **Improve social media sourcing** — Exa's Twitter/X results are unreliable (domain filter not strictly respected). Options: (a) use a dedicated Twitter API or RapidAPI Twitter scraper; (b) drop Twitter entirely and rely on Perplexity + news for social signals; (c) keep as-is (pills-only display, data collected but low signal).
 
-4. **Make enrichment faster** — current pipeline is sequential (5 phases, multiple round-trips). Ideas: parallelise Phase 1 + Phase 0 where possible; cache Exa results for recently searched companies; consider running Phase 2 classification inside the Phase 4 prompt to save one Claude call; explore streaming responses to show partial results sooner.
+4. **Follow-ups tab** — build a proper follow-up management view: list all sent leads with `follow_up_1_due` / `follow_up_2_due` dates, ability to preview/edit follow-up copy, and a send button per follow-up. Also remove the redundant Claude call in the send route.
+
+5. **Tracking dashboard tab** — pipeline metrics: leads by status, conversion rates, emails sent vs opened, top industries/lead types. `recharts` is already installed.
+
+6. **Make enrichment faster** — Phase 0 (website discovery) still runs before Phase 1. Could parallelize 0+1 for companies that already have a website. Also consider running Phase 2 classification inside the Phase 4 prompt to save one Claude call.
 
 ---
 
@@ -147,6 +200,10 @@ ALTER TABLE messages
 - **`isGenericUrl` in news search** — filters URLs where `pathname` has ≤2 segments and any segment matches known index words (news, blog, press, company, en, fr, etc.). Keeps specific article slugs, tweets, LinkedIn posts.
 - **Current Claude model:** `claude-sonnet-4-5` (set in `lib/claude.ts`). Update there to change globally.
 - **Enrichment only writes null fields** — never overwrites manually set values. Check `overwritableFields` and `contactFields` arrays in `qualify/[id]/route.ts`.
+- **Apollo params must be query string, not JSON body** — the People Match endpoint is POST but expects parameters as URL query params (`?name=...&domain=...`), not as a JSON body. Sending as JSON body causes the API to return sparse/wrong matches.
+- **Apollo free tier may not reveal emails via API** — the UI can show emails you can see on app.apollo.io, but the API key's plan level determines what `reveal_personal_emails=true` actually returns. Upgrade to a paid plan for reliable email reveal.
+- **Social media domain filtering is post-hoc** — `includeDomains` in Exa is not always reliable. `isSocialDomain()` in `lib/twitter.ts` filters results after the fact; always keep this filter in place.
+- **`strategic_priorities` backward compatibility** — old leads have a flat string value. Both the email generation route and the message panel UI handle this gracefully with a try/catch and legacy fallback path.
 
 ### DB schema tables
 - `leads` — recreated clean (no cascade dependencies remain)
@@ -161,7 +218,9 @@ ANTHROPIC_API_KEY
 RESEND_API_KEY
 RESEND_FROM_EMAIL
 EXA_API_KEY
-# APOLLO_API_KEY  (not yet implemented)
+APOLLO_API_KEY                # Apollo People Match for email lookup
+NEXT_PUBLIC_APOLLO_ENABLED    # Set to 'true' to show Apollo dialog in UI
+PERPLEXITY_API_KEY            # Perplexity sonar search for company priorities
 ```
 
 ### Email guidelines
@@ -192,5 +251,4 @@ npm run lint         # ESLint check
 ```
 
 ### Git
-- Active branch: `feat/new-model-ui-rewrite`
-- Base branch: `main`
+- Active branch: `main`

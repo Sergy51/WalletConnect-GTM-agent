@@ -40,14 +40,43 @@ export async function POST(
       }
     } catch { /* ignore */ }
 
-    const emailPrompt = `Write a cold outreach email on behalf of Sergio Sanchez, Partnerships Director at WalletConnect.
+    // Parse structured strategic priorities
+    let strategicIntelBlock = 'Strategic priorities: Not available'
+    try {
+      const sp = lead.strategic_priorities ? JSON.parse(lead.strategic_priorities) : null
+      if (sp && typeof sp === 'object' && (sp.news_and_press || sp.company_content || sp.social_media)) {
+        const sections: string[] = []
+        if (sp.news_and_press?.length > 0) {
+          sections.push(`--- News & Press Releases ---\n${sp.news_and_press.map((b: string) => `• ${b}`).join('\n')}`)
+        }
+        if (sp.company_content?.length > 0) {
+          sections.push(`--- Company Content (Perplexity) ---\n${sp.company_content.map((b: string) => `• ${b}`).join('\n')}`)
+        }
+        // social_media intentionally excluded — tweet content is too noisy for email drafting
+        if (sections.length > 0) {
+          strategicIntelBlock = `=== STRATEGIC INTELLIGENCE ===\n${sections.join('\n\n')}`
+        }
+      } else if (lead.strategic_priorities) {
+        // Legacy flat string
+        strategicIntelBlock = `Strategic priorities: ${lead.strategic_priorities}`
+      }
+    } catch {
+      // Parse failed — treat as legacy flat string
+      if (lead.strategic_priorities) {
+        strategicIntelBlock = `Strategic priorities: ${lead.strategic_priorities}`
+      }
+    }
+
+    const emailPrompt = `Write a cold outreach email on behalf of Sergio Sanchez, Partnerships Lead at WalletConnect.
 
 === LEAD CONTEXT ===
 Recipient: ${lead.contact_name || 'the decision maker'}, ${lead.contact_role || 'Decision Maker'} at ${lead.company}
 Company description: ${lead.company_description || lead.company}
-Strategic priorities: ${lead.strategic_priorities || 'Not available'}
+${strategicIntelBlock}
 ${newsContext ? newsContext + '\n' : ''}${lead.walletconnect_value_prop ? `Why WalletConnect Pay fits them: ${lead.walletconnect_value_prop}\n` : ''}Key value props: ${lead.key_vp || 'Lower Fees, Global Reach'}
 GTM context: ${trackContext}
+
+IMPORTANT: From the strategic intelligence above, pick the SINGLE most relevant and specific data point to reference in the email opening. Prefer data mentioning payments, crypto, digital assets, or partnerships. Do NOT try to reference all of them — the email must stay under 150 words.
 
 === EMAIL STRUCTURE — follow exactly, total body under 150 words ===
 1. Subject: Short (5–8 words), specific to the recipient's company or role. No generic lines.
@@ -55,7 +84,7 @@ GTM context: ${trackContext}
 3. Value bridge (2–3 sentences): Connect what you know about their specific business situation and priorities to a concrete problem WalletConnect Pay solves. Name their actual pain points or goals. Be specific — mention their volumes, use cases, or stated objectives.
 4. Credibility signal (1 sentence): One proof point — always use: "We process over $400B in transacted volume globally across PSP and merchant partners."
 5. CTA (1 sentence): ${ctaInstruction}
-6. Sign-off: "Best,\\nSergio Sanchez\\nPartnerships Director, WalletConnect"
+6. Sign-off: "Best,\\nSergio Sanchez\\nPartnerships Lead, WalletConnect"
 
 === TONE ===
 Professional but not corporate. Write like a knowledgeable peer, not a salesperson. No buzzwords, no "exciting opportunity", no "I wanted to reach out."
@@ -77,7 +106,7 @@ Would 20 minutes make sense to explore how this would work within your unified c
 
 Best,
 Sergio Sanchez
-Partnerships Director, WalletConnect
+Partnerships Lead, WalletConnect
 
 --- Example 2: PSP (Travel) — Amadeus/Outpayce (Carol Borg, CFO) ---
 Subject: Unlocking crypto payments for Outpayce's travel merchants
@@ -92,7 +121,7 @@ Given Outpayce's open marketplace approach, I think there's a natural fit. Would
 
 Best,
 Sergio Sanchez
-Partnerships Director, WalletConnect
+Partnerships Lead, WalletConnect
 
 --- Example 3: Merchant — Gucci (Francesca Bellettini, CEO) ---
 Subject: Scaling Gucci's crypto payments beyond the U.S. pilot
@@ -107,7 +136,7 @@ I'd love to share how we could support Gucci's global rollout. Would a 15-minute
 
 Best,
 Sergio Sanchez
-Partnerships Director, WalletConnect
+Partnerships Lead, WalletConnect
 --- END EXAMPLES ---
 
 Also write two follow-up messages:
@@ -119,7 +148,7 @@ Return ONLY valid JSON:
 
 No markdown, no explanation, just the JSON object.`
 
-    const linkedinPrompt = `Write a short LinkedIn DM on behalf of Sergio Sanchez, Partnerships Director at WalletConnect.
+    const linkedinPrompt = `Write a short LinkedIn DM on behalf of Sergio Sanchez, Partnerships Lead at WalletConnect.
 
 Recipient: ${lead.contact_name || 'the decision maker'}, ${lead.contact_role || 'Decision Maker'} at ${lead.company}
 Company context: ${lead.company_description || lead.company}

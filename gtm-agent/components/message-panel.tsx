@@ -33,6 +33,133 @@ function Spinner() {
   return <div className="inline-block h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin opacity-60" />
 }
 
+interface StrategicPrioritiesDisplayProps {
+  priorities: string
+  newsSources: { title: string; url: string }[]
+}
+
+function StrategicPrioritiesDisplay({ priorities, newsSources }: StrategicPrioritiesDisplayProps) {
+  let parsed: { news_and_press?: string[]; company_content?: string[]; social_media?: string[] } | null = null
+  try {
+    const obj = JSON.parse(priorities)
+    if (obj && typeof obj === 'object' && (obj.news_and_press || obj.company_content || obj.social_media)) {
+      parsed = obj
+    }
+  } catch { /* legacy string */ }
+
+  if (!parsed) {
+    // Legacy flat string fallback
+    return (
+      <div>
+        <div className="text-xs text-muted-foreground mb-1">Strategic Priorities</div>
+        <p className="text-sm leading-relaxed">{priorities}</p>
+        {newsSources.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {newsSources.map((s, i) => (
+              <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors">
+                Source {i + 1}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // social_media items can be { text, url } objects or legacy strings
+  type SocialItem = { text: string; url: string } | string
+  const socialItems: SocialItem[] = Array.isArray(parsed.social_media) ? parsed.social_media : []
+
+  const hasNews = (parsed.news_and_press?.length ?? 0) > 0
+  const hasContent = (parsed.company_content?.length ?? 0) > 0
+  const hasSocial = socialItems.length > 0
+
+  if (!hasNews && !hasContent && !hasSocial) return null
+
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground mb-1">Strategic Priorities</div>
+      <div className="space-y-2">
+        {hasNews && (
+          <CollapsibleSection label="News & Press Releases">
+            <ul className="text-sm leading-relaxed space-y-1">
+              {(parsed.news_and_press ?? []).map((item: string, i: number) => (
+                <li key={i} className="flex gap-1.5">
+                  <span className="text-muted-foreground shrink-0">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+            {newsSources.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {newsSources.map((s, i) => (
+                  <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors">
+                    Source {i + 1}
+                  </a>
+                ))}
+              </div>
+            )}
+          </CollapsibleSection>
+        )}
+
+        {hasContent && (
+          <CollapsibleSection label="Company Content">
+            <ul className="text-sm leading-relaxed space-y-1">
+              {(parsed.company_content ?? []).map((item: string, i: number) => (
+                <li key={i} className="flex gap-1.5">
+                  <span className="text-muted-foreground shrink-0">•</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleSection>
+        )}
+
+        {hasSocial && (
+          <CollapsibleSection label="Social Media">
+            <div className="flex flex-wrap gap-1.5">
+              {socialItems.map((item, i) => {
+                const url = typeof item === 'string' ? null : item.url
+                const text = typeof item === 'string' ? item : item.text
+                const label = url?.includes('linkedin.com') ? 'LinkedIn' : url?.includes('twitter.com') || url?.includes('x.com') ? 'X / Twitter' : `Post ${i + 1}`
+                return url ? (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" title={text}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors">
+                    {label} {i + 1}
+                  </a>
+                ) : (
+                  <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground">
+                    {text.slice(0, 60)}…
+                  </span>
+                )
+              })}
+            </div>
+          </CollapsibleSection>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
+function CollapsibleSection({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="border rounded-md">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center justify-between w-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <span>{label}</span>
+        <span className="text-[10px]">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && <div className="px-2.5 pb-2">{children}</div>}
+    </div>
+  )
+}
+
 export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProps) {
   const lead = leads[index]
   const [localLead, setLocalLead] = useState<Lead>(lead)
@@ -53,6 +180,8 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
   const [secondaryName, setSecondaryName] = useState('')
   const [secondaryEmail, setSecondaryEmail] = useState('')
   const [secondaryLinkedIn, setSecondaryLinkedIn] = useState('')
+  const [showApolloDialog, setShowApolloDialog] = useState(false)
+  const apolloEnabled = process.env.NEXT_PUBLIC_APOLLO_ENABLED === 'true'
 
   useEffect(() => {
     if (!lead) return
@@ -97,10 +226,23 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
     }
   }
 
-  async function enrichLead() {
+  function handleEnrichClick() {
+    if (apolloEnabled) {
+      setShowApolloDialog(true)
+    } else {
+      enrichLead(false)
+    }
+  }
+
+  async function enrichLead(useApollo: boolean) {
+    setShowApolloDialog(false)
     setEnriching(true)
     try {
-      const res = await fetch(`/api/qualify/${localLead.id}`, { method: 'POST' })
+      const res = await fetch(`/api/qualify/${localLead.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ useApollo }),
+      })
       if (!res.ok) {
         const err = await res.json()
         toast.error(err.error || 'Enrichment failed')
@@ -228,26 +370,10 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
             )}
 
             {localLead.strategic_priorities && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Strategic Priorities</div>
-                <p className="text-sm leading-relaxed">{localLead.strategic_priorities}</p>
-                {newsSources.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {newsSources.map((s, i) => (
-                      <a
-                        key={i}
-                        href={s.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={s.title}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors"
-                      >
-                        Source {i + 1}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <StrategicPrioritiesDisplay
+                priorities={localLead.strategic_priorities}
+                newsSources={newsSources}
+              />
             )}
 
             {localLead.company_description && (
@@ -331,11 +457,24 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
                 <p className="text-sm text-muted-foreground max-w-xs">
                   This lead hasn&apos;t been enriched yet. Enrich it first to find the right contact and generate a personalised email.
                 </p>
-                <Button onClick={enrichLead} disabled={enriching} className="mt-1">
+                <Button onClick={handleEnrichClick} disabled={enriching} className="mt-1">
                   {enriching ? (
                     <span className="flex items-center gap-2"><Spinner /> Enriching...</span>
                   ) : 'Enrich'}
                 </Button>
+
+                {showApolloDialog && (
+                  <div className="mt-4 p-4 border rounded-lg bg-background shadow-sm max-w-sm">
+                    <div className="font-medium text-sm mb-1">Use Apollo.io for email lookup?</div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Apollo can find verified email addresses using API credits. Each enrichment uses at most 1 API call.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => enrichLead(false)}>Skip Apollo</Button>
+                      <Button size="sm" onClick={() => enrichLead(true)}>Use Apollo</Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
