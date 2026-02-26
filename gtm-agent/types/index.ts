@@ -1,7 +1,7 @@
 export type LeadStatus =
   | 'New'
+  | 'Enriched'
   | 'Contacted'
-  | 'Qualified'
   | 'Proposal'
   | 'Negotiating'
   | 'Won'
@@ -28,11 +28,14 @@ export interface Lead {
   lead_source: 'Inbound' | 'Outbound' | 'Referral' | 'Event' | null
   lead_status: LeadStatus
   payments_stack: string | null
-  crypto_capabilities: 'None' | 'Basic' | 'Advanced' | null
   estimated_yearly_volumes: string | null
   strategic_priorities: string | null
-  lead_priority: 'High' | 'Medium' | 'Low' | null
+  lead_priority: 'Very High' | 'High' | 'Medium' | 'Low' | null
   key_vp: string | null
+  // Secondary contact
+  secondary_contact_name: string | null
+  secondary_contact_email: string | null
+  secondary_contact_linkedin: string | null
   // Internal
   company_description: string | null
   walletconnect_value_prop: string | null

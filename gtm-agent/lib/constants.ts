@@ -32,8 +32,12 @@ export const WC_VALUE_PROPS = [
     description: '500M+ reachable wallet users across 700+ wallets — no card network required',
   },
   {
-    key: 'Zero Chargebacks',
-    description: 'Crypto transactions are irreversible — eliminates fraud disputes and related losses entirely',
+    key: 'Compliance',
+    description: 'Enables travel rule compliance and sanctions screening — reduces regulatory risk for PSPs operating across jurisdictions',
+  },
+  {
+    key: 'New Volumes',
+    description: 'Attracts new crypto-native customers and unlocks larger basket sizes — crypto purchases average 15–20% higher than card transactions',
   },
   {
     key: 'Single API',

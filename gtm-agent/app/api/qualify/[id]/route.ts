@@ -224,9 +224,9 @@ Rules:
 KEY VALUE PROPOSITIONS (mandatory — never return null):
 Pick 1–2 from EXACTLY: ${vpKeys}
 ${resolvedType === 'PSP'
-  ? '→ PSP: prefer "Single API" (one integration, all merchants) and "Global Reach" (500M wallet users)'
+  ? '→ PSP: prefer "Compliance" (travel rule + sanctions screening) and "Single API" (one integration, all merchants)'
   : resolvedType === 'Merchant'
-    ? '→ Merchant: prefer "Lower Fees" (0.5–1% vs 2.5–3.5% cards) and "Zero Chargebacks" (irreversible crypto)'
+    ? '→ Merchant: prefer "Lower Fees" (0.5–1% vs 2.5–3.5% cards) and "New Volumes" (crypto-native customers, 15–20% larger baskets)'
     : '→ Default to "Lower Fees, Global Reach" if type is unclear'}
 Return as comma-separated string. If unsure, default to "Lower Fees, Global Reach".
 
@@ -236,8 +236,11 @@ ${vpList}
 OTHER FIELDS:
 - lead_type: confirm or correct the already-determined value (${resolvedType ?? 'Unknown'})
 - industry: exactly one from: ${industryList}
-- lead_priority: "High" = strong fit, "Medium" = possible, "Low" = weak
-- crypto_capabilities: "None" / "Basic" / "Advanced"
+- lead_priority: score based on how explicitly crypto payments appear in the company's strategic priorities:
+  "Very High" = strategic priorities explicitly mention crypto payments, crypto acceptance, stablecoins, or digital assets
+  "High" = no explicit crypto mention, but stated goals (e.g. lower costs, faster settlement, global expansion) are meaningfully served by crypto payments
+  "Medium" = crypto payments are only a tangential or partial fit for stated priorities
+  "Low" = no meaningful fit between stated priorities and crypto payments
 - company_size_employees: confirm or correct (${resolvedSize ?? 'Unknown'}) — '1-10','10-100','100-500','500-5000','5000+'
 - company_size_revenue: '<$1M','$1-10M','$10-100M','$100-500M','$500M+'
 - payments_stack, estimated_yearly_volumes, strategic_priorities: fill if inferable
@@ -250,10 +253,9 @@ Return ONLY valid JSON (null for unknown fields; key_vp always required):
   "company_size_employees": string | null,
   "company_size_revenue": string | null,
   "payments_stack": string | null,
-  "crypto_capabilities": "None" | "Basic" | "Advanced" | null,
   "estimated_yearly_volumes": string | null,
   "strategic_priorities": string | null,
-  "lead_priority": "High" | "Medium" | "Low" | null,
+  "lead_priority": "Very High" | "High" | "Medium" | "Low" | null,
   "key_vp": string,
   "contact_name": string | null,
   "contact_role": string | null,
@@ -298,10 +300,10 @@ No markdown, no explanation, just the JSON object.`
       emailInferred = true
     }
 
-    const updates: Record<string, string | boolean | null> = { lead_status: 'Qualified' }
+    const updates: Record<string, string | boolean | null> = { lead_status: 'Enriched' }
     const overwritableFields = [
       'lead_type', 'industry', 'company_size_employees', 'company_size_revenue',
-      'payments_stack', 'crypto_capabilities', 'estimated_yearly_volumes',
+      'payments_stack', 'estimated_yearly_volumes',
       'strategic_priorities', 'lead_priority', 'key_vp',
       'company_description', 'walletconnect_value_prop',
     ]

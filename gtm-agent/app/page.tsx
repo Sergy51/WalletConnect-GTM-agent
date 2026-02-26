@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
@@ -9,14 +9,13 @@ import { MessagePanel } from '@/components/message-panel'
 import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
 import type { Lead, LeadStatus } from '@/types'
 
-const STATUS_OPTIONS: LeadStatus[] = ['New', 'Qualified', 'Contacted', 'Proposal', 'Negotiating', 'Won', 'Lost', 'Churned']
+const STATUS_OPTIONS: LeadStatus[] = ['New', 'Enriched', 'Contacted', 'Proposal', 'Negotiating', 'Won', 'Lost', 'Churned']
 const TYPE_OPTIONS = ['PSP', 'Merchant', 'Other'] as const
-const PRIORITY_OPTIONS = ['High', 'Medium', 'Low'] as const
-const CRYPTO_OPTIONS = ['None', 'Basic', 'Advanced'] as const
+const PRIORITY_OPTIONS = ['Very High', 'High', 'Medium', 'Low'] as const
 
 const STATUS_COLORS: Record<string, string> = {
   New: 'bg-slate-100 text-slate-700',
-  Qualified: 'bg-blue-100 text-blue-700',
+  Enriched: 'bg-blue-100 text-blue-700',
   Contacted: 'bg-orange-100 text-orange-700',
   Proposal: 'bg-purple-100 text-purple-700',
   Negotiating: 'bg-yellow-100 text-yellow-700',
@@ -26,7 +25,8 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  High: 'bg-red-100 text-red-700',
+  'Very High': 'bg-red-100 text-red-700',
+  High: 'bg-orange-100 text-orange-700',
   Medium: 'bg-yellow-100 text-yellow-700',
   Low: 'bg-gray-100 text-gray-600',
 }
@@ -35,7 +35,8 @@ const VP_COLORS: Record<string, string> = {
   'Lower Fees': 'bg-green-100 text-green-700',
   'Instant Settlement': 'bg-blue-100 text-blue-700',
   'Global Reach': 'bg-purple-100 text-purple-700',
-  'Zero Chargebacks': 'bg-red-100 text-red-700',
+  'Compliance': 'bg-red-100 text-red-700',
+  'New Volumes': 'bg-teal-100 text-teal-700',
   'Single API': 'bg-orange-100 text-orange-700',
 }
 
@@ -71,11 +72,6 @@ function InlineSelect({ value, options, placeholder = '—', colorMap, onChange 
   )
 }
 
-function TruncatedCell({ text }: { text: string | null }) {
-  if (!text) return <span className="text-muted-foreground">—</span>
-  return <span className="truncate block max-w-[140px]" title={text}>{text}</span>
-}
-
 function KeyVpCell({ value }: { value: string | null }) {
   if (!value) return <span className="text-muted-foreground">—</span>
   const vps = value.split(',').map(v => v.trim()).filter(Boolean)
@@ -90,6 +86,166 @@ function KeyVpCell({ value }: { value: string | null }) {
   )
 }
 
+interface InlineEditCellProps {
+  value: string | null
+  leadId: string
+  field: string
+  placeholder?: string
+  maxWidth?: string
+  multiline?: boolean
+  textClassName?: string
+  onSave: (id: string, field: string, val: string) => void
+}
+
+function InlineEditCell({ value, leadId, field, placeholder = '—', maxWidth = '140px', multiline = false, textClassName = '', onSave }: InlineEditCellProps) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  function start() { setDraft(value || ''); setEditing(true) }
+  function commit() {
+    setEditing(false)
+    if (draft !== (value || '')) onSave(leadId, field, draft)
+  }
+
+  if (editing) {
+    if (multiline) {
+      return (
+        <textarea
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Escape') { setEditing(false); setDraft(value || '') } }}
+          rows={3}
+          className="text-xs px-1 py-0.5 border border-blue-400 rounded w-full min-w-[120px] bg-background outline-none resize-none"
+        />
+      )
+    }
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') commit()
+          if (e.key === 'Escape') { setEditing(false); setDraft(value || '') }
+        }}
+        className="text-xs px-1 py-0.5 border border-blue-400 rounded w-full min-w-[80px] bg-background outline-none"
+      />
+    )
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={start}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') start() }}
+      className="cursor-pointer text-left w-full hover:bg-muted/40 rounded px-0.5 -mx-0.5 min-h-[1.25rem] flex items-center"
+      title="Click to edit"
+    >
+      {value
+        ? <span className={`truncate block ${textClassName}`} style={{ maxWidth }}>{value}</span>
+        : <span className="text-muted-foreground">{placeholder}</span>
+      }
+    </div>
+  )
+}
+
+function InlineKeyVpCell({ value, leadId, onSave }: { value: string | null; leadId: string; onSave: (id: string, field: string, val: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 })
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+
+  const selected = value ? value.split(',').map(v => v.trim()).filter(Boolean) : []
+
+  function openMenu() {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      setDropPos({ top: rect.bottom + 2, left: rect.left })
+    }
+    setOpen(true)
+  }
+
+  function toggle(vp: string) {
+    let next: string[]
+    if (selected.includes(vp)) {
+      next = selected.filter(v => v !== vp)
+    } else if (selected.length < 2) {
+      next = [...selected, vp]
+    } else {
+      return
+    }
+    onSave(leadId, 'key_vp', next.join(', '))
+  }
+
+  useEffect(() => {
+    if (!open) return
+    function handle(e: MouseEvent) {
+      const target = e.target as Node
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        dropRef.current && !dropRef.current.contains(target)
+      ) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [open])
+
+  return (
+    <>
+      <div
+        ref={triggerRef}
+        role="button"
+        tabIndex={0}
+        onClick={openMenu}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openMenu() }}
+        className="cursor-pointer w-full hover:bg-muted/40 rounded min-h-[1.25rem] py-0.5"
+      >
+        <KeyVpCell value={value} />
+      </div>
+      {open && (
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, zIndex: 9999 }}
+          className="bg-background border rounded-lg shadow-lg p-2 w-52"
+        >
+          <div className="text-[10px] text-muted-foreground mb-1.5 px-1">
+            Select up to 2 · {selected.length}/2 selected
+          </div>
+          {WC_VALUE_PROPS.map(({ key: vp }) => {
+            const isSelected = selected.includes(vp)
+            const isDisabled = !isSelected && selected.length >= 2
+            return (
+              <label
+                key={vp}
+                className={`flex items-center gap-2 px-1.5 py-1 rounded text-xs ${
+                  isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-muted/50'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  disabled={isDisabled}
+                  onChange={() => toggle(vp)}
+                  className="rounded"
+                />
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${VP_COLORS[vp] || 'bg-gray-100 text-gray-600'}`}>
+                  {vp}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function HomePage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
@@ -98,7 +254,6 @@ export default function HomePage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [panelLeads, setPanelLeads] = useState<Lead[]>([])
   const [panelIndex, setPanelIndex] = useState(0)
-  const [expandedPriorities, setExpandedPriorities] = useState<Set<string>>(new Set())
 
   const fetchLeads = useCallback(async () => {
     try {
@@ -199,19 +354,15 @@ export default function HomePage() {
     setPanelIndex(0)
   }
 
+  function openPanelForSingleLead(lead: Lead) {
+    setPanelLeads([lead])
+    setPanelIndex(0)
+  }
+
   function handlePanelClose() {
     setPanelLeads([])
     setPanelIndex(0)
     fetchLeads()
-  }
-
-  function togglePriorityExpanded(id: string) {
-    setExpandedPriorities(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
   }
 
   const allSelected = leads.length > 0 && selected.size === leads.length
@@ -271,7 +422,6 @@ export default function HomePage() {
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">LinkedIn</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Status</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Payments Stack</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Crypto</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Est. Volume</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Priorities</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Priority</th>
@@ -282,7 +432,6 @@ export default function HomePage() {
               {leads.map((lead) => {
                 const isSelected = selected.has(lead.id)
                 const isEnriching = enriching.has(lead.id)
-                const prioritiesExpanded = expandedPriorities.has(lead.id)
 
                 return (
                   <tr key={lead.id}
@@ -295,81 +444,89 @@ export default function HomePage() {
                       )}
                     </td>
                     <td className={`sticky left-8 z-10 px-2 py-1.5 font-medium min-w-[120px] max-w-[160px] ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
-                      <span className="truncate block" title={lead.company}>{lead.company}</span>
+                      <button
+                        onClick={() => openPanelForSingleLead(lead)}
+                        className="truncate block text-left text-blue-600 hover:underline font-medium w-full"
+                        title={`Open ${lead.company}`}
+                      >
+                        {lead.company}
+                      </button>
                     </td>
                     <td className={`sticky left-[152px] z-10 px-2 py-1.5 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
                       <InlineSelect value={lead.lead_type} options={TYPE_OPTIONS} onChange={v => updateLeadField(lead.id, 'lead_type', v)} />
                     </td>
 
                     {/* Scrollable cells */}
-                    <td className="px-2 py-1.5 max-w-[120px]">
-                      {lead.company_website ? (
-                        <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline truncate block max-w-[120px]"
-                          title={lead.company_website}>
-                          {lead.company_website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
-                        </a>
-                      ) : <span className="text-muted-foreground">—</span>}
+                    <td className="px-2 py-1.5 max-w-[140px]">
+                      <div className="flex items-center gap-1">
+                        <InlineEditCell value={lead.company_website} leadId={lead.id} field="company_website" maxWidth="100px" onSave={updateLeadField} />
+                        {lead.company_website && (
+                          <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
+                            className="text-blue-500 shrink-0 hover:text-blue-700 text-[11px]" title="Open link">↗</a>
+                        )}
+                      </div>
                     </td>
                     <td className="px-2 py-1.5">
                       <InlineSelect value={lead.industry} options={INDUSTRIES} onChange={v => updateLeadField(lead.id, 'industry', v)} />
                     </td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">{lead.company_size_employees || <span className="text-muted-foreground">—</span>}</td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">{lead.company_size_revenue || <span className="text-muted-foreground">—</span>}</td>
-                    <td className="px-2 py-1.5"><TruncatedCell text={lead.contact_name} /></td>
-                    <td className="px-2 py-1.5"><TruncatedCell text={lead.contact_role} /></td>
                     <td className="px-2 py-1.5">
-                      {lead.contact_email ? (
-                        <span className="flex items-center gap-1">
-                          <span
-                            className={`truncate max-w-[130px] ${lead.contact_email_inferred ? 'text-orange-500' : ''}`}
-                            title={lead.contact_email}
-                          >
-                            {lead.contact_email}
-                          </span>
-                          {lead.contact_email_inferred && (
-                            <span
-                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold cursor-help leading-none shrink-0"
-                              title="This email was AI-generated and may not be real. Verify before sending."
-                            >!</span>
-                          )}
-                        </span>
-                      ) : <span className="text-muted-foreground">—</span>}
+                      <InlineEditCell value={lead.company_size_employees} leadId={lead.id} field="company_size_employees" maxWidth="70px" onSave={updateLeadField} />
                     </td>
                     <td className="px-2 py-1.5">
-                      {lead.contact_linkedin
-                        ? <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline" title={lead.contact_linkedin}>LinkedIn</a>
-                        : <span className="text-muted-foreground">—</span>}
+                      <InlineEditCell value={lead.company_size_revenue} leadId={lead.id} field="company_size_revenue" maxWidth="80px" onSave={updateLeadField} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <InlineEditCell value={lead.contact_name} leadId={lead.id} field="contact_name" maxWidth="120px" onSave={updateLeadField} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <InlineEditCell value={lead.contact_role} leadId={lead.id} field="contact_role" maxWidth="120px" onSave={updateLeadField} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <InlineEditCell
+                          value={lead.contact_email}
+                          leadId={lead.id}
+                          field="contact_email"
+                          maxWidth="120px"
+                          textClassName={lead.contact_email_inferred ? 'text-orange-500' : ''}
+                          onSave={updateLeadField}
+                        />
+                        {lead.contact_email_inferred && lead.contact_email && (
+                          <span
+                            className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold cursor-help leading-none shrink-0"
+                            title="This email was AI-generated and may not be real. Verify before sending."
+                          >!</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <InlineEditCell value={lead.contact_linkedin} leadId={lead.id} field="contact_linkedin" placeholder="—" maxWidth="60px" onSave={updateLeadField} />
+                        {lead.contact_linkedin && (
+                          <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
+                            className="text-blue-500 shrink-0 hover:text-blue-700 text-[11px]" title="Open LinkedIn">↗</a>
+                        )}
+                      </div>
                     </td>
                     <td className="px-2 py-1.5">
                       <InlineSelect value={lead.lead_status} options={STATUS_OPTIONS} colorMap={STATUS_COLORS}
                         onChange={v => updateLeadField(lead.id, 'lead_status', v)} />
                     </td>
-                    <td className="px-2 py-1.5"><TruncatedCell text={lead.payments_stack} /></td>
                     <td className="px-2 py-1.5">
-                      <InlineSelect value={lead.crypto_capabilities} options={CRYPTO_OPTIONS}
-                        onChange={v => updateLeadField(lead.id, 'crypto_capabilities', v)} />
+                      <InlineEditCell value={lead.payments_stack} leadId={lead.id} field="payments_stack" maxWidth="120px" onSave={updateLeadField} />
                     </td>
-                    <td className="px-2 py-1.5"><TruncatedCell text={lead.estimated_yearly_volumes} /></td>
-                    <td className="px-2 py-1.5 max-w-[160px]">
-                      {lead.strategic_priorities ? (
-                        <button onClick={() => togglePriorityExpanded(lead.id)} className="text-left w-full" title={lead.strategic_priorities}>
-                          <span className={`block text-xs ${prioritiesExpanded ? '' : 'truncate max-w-[150px]'}`}>
-                            {lead.strategic_priorities}
-                          </span>
-                          {!prioritiesExpanded && lead.strategic_priorities.length > 60 && (
-                            <span className="text-muted-foreground text-xs">more</span>
-                          )}
-                        </button>
-                      ) : <span className="text-muted-foreground">—</span>}
+                    <td className="px-2 py-1.5">
+                      <InlineEditCell value={lead.estimated_yearly_volumes} leadId={lead.id} field="estimated_yearly_volumes" maxWidth="90px" onSave={updateLeadField} />
+                    </td>
+                    <td className="px-2 py-1.5 max-w-[180px]">
+                      <InlineEditCell value={lead.strategic_priorities} leadId={lead.id} field="strategic_priorities" maxWidth="160px" multiline onSave={updateLeadField} />
                     </td>
                     <td className="px-2 py-1.5">
                       <InlineSelect value={lead.lead_priority} options={PRIORITY_OPTIONS} colorMap={PRIORITY_COLORS}
                         onChange={v => updateLeadField(lead.id, 'lead_priority', v)} />
                     </td>
                     <td className="px-2 py-1.5 min-w-[140px]">
-                      <KeyVpCell value={lead.key_vp} />
+                      <InlineKeyVpCell value={lead.key_vp} leadId={lead.id} onSave={updateLeadField} />
                     </td>
                   </tr>
                 )
