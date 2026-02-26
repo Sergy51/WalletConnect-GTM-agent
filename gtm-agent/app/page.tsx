@@ -10,8 +10,27 @@ import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
 import type { Lead, LeadStatus } from '@/types'
 
 const STATUS_OPTIONS: LeadStatus[] = ['New', 'Enriched', 'Contacted', 'Proposal', 'Negotiating', 'Won', 'Lost', 'Churned']
+
+const STATUS_RANK: Record<string, number> = {
+  Won: 0,
+  Negotiating: 1,
+  Proposal: 2,
+  Contacted: 3,
+  Enriched: 4,
+  New: 5,
+  Lost: 6,
+  Churned: 7,
+}
+
+function sortLeads(leads: Lead[]): Lead[] {
+  return [...leads].sort((a, b) => {
+    const rankDiff = (STATUS_RANK[a.lead_status] ?? 5) - (STATUS_RANK[b.lead_status] ?? 5)
+    if (rankDiff !== 0) return rankDiff
+    return a.company.localeCompare(b.company)
+  })
+}
 const TYPE_OPTIONS = ['PSP', 'Merchant', 'Other'] as const
-const PRIORITY_OPTIONS = ['Very High', 'High', 'Medium', 'Low'] as const
+const PRIORITY_OPTIONS = ['High', 'Medium'] as const
 
 const STATUS_COLORS: Record<string, string> = {
   New: 'bg-slate-100 text-slate-700',
@@ -25,10 +44,8 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  'Very High': 'bg-red-100 text-red-700',
   High: 'bg-orange-100 text-orange-700',
   Medium: 'bg-yellow-100 text-yellow-700',
-  Low: 'bg-gray-100 text-gray-600',
 }
 
 const VP_COLORS: Record<string, string> = {
@@ -260,7 +277,7 @@ export default function HomePage() {
       const res = await fetch('/api/leads')
       if (!res.ok) throw new Error('Failed to fetch leads')
       const data: Lead[] = await res.json()
-      setLeads(data)
+      setLeads(sortLeads(data))
     } catch {
       toast.error('Failed to load leads')
     } finally {
@@ -284,7 +301,7 @@ export default function HomePage() {
   }
 
   async function updateLeadField(id: string, field: string, value: string) {
-    setLeads(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l))
+    setLeads(prev => sortLeads(prev.map(l => l.id === id ? { ...l, [field]: value } : l)))
     try {
       const res = await fetch(`/api/update-lead/${id}`, {
         method: 'PATCH',
@@ -317,7 +334,7 @@ export default function HomePage() {
           results.push({ id, success: false, error: err.error || `HTTP ${res.status}` })
         } else {
           const updated: Lead = await res.json()
-          setLeads(prev => prev.map(l => l.id === id ? updated : l))
+          setLeads(prev => sortLeads(prev.map(l => l.id === id ? updated : l)))
           results.push({ id, success: true })
         }
       } catch (e) {
@@ -421,10 +438,7 @@ export default function HomePage() {
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Email</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">LinkedIn</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Status</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Payments Stack</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Est. Volume</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Priorities</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Priority</th>
+                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Crypto Priority</th>
                 <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Key VP</th>
               </tr>
             </thead>
@@ -457,14 +471,11 @@ export default function HomePage() {
                     </td>
 
                     {/* Scrollable cells */}
-                    <td className="px-2 py-1.5 max-w-[140px]">
-                      <div className="flex items-center gap-1">
-                        <InlineEditCell value={lead.company_website} leadId={lead.id} field="company_website" maxWidth="100px" onSave={updateLeadField} />
-                        {lead.company_website && (
-                          <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
-                            className="text-blue-500 shrink-0 hover:text-blue-700 text-[11px]" title="Open link">↗</a>
-                        )}
-                      </div>
+                    <td className="px-2 py-1.5">
+                      {lead.company_website
+                        ? <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline font-medium">Website</a>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-2 py-1.5">
                       <InlineSelect value={lead.industry} options={INDUSTRIES} onChange={v => updateLeadField(lead.id, 'industry', v)} />
@@ -500,26 +511,14 @@ export default function HomePage() {
                       </div>
                     </td>
                     <td className="px-2 py-1.5">
-                      <div className="flex items-center gap-1">
-                        <InlineEditCell value={lead.contact_linkedin} leadId={lead.id} field="contact_linkedin" placeholder="—" maxWidth="60px" onSave={updateLeadField} />
-                        {lead.contact_linkedin && (
-                          <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
-                            className="text-blue-500 shrink-0 hover:text-blue-700 text-[11px]" title="Open LinkedIn">↗</a>
-                        )}
-                      </div>
+                      {lead.contact_linkedin
+                        ? <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline font-medium">LinkedIn</a>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-2 py-1.5">
                       <InlineSelect value={lead.lead_status} options={STATUS_OPTIONS} colorMap={STATUS_COLORS}
                         onChange={v => updateLeadField(lead.id, 'lead_status', v)} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineEditCell value={lead.payments_stack} leadId={lead.id} field="payments_stack" maxWidth="120px" onSave={updateLeadField} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineEditCell value={lead.estimated_yearly_volumes} leadId={lead.id} field="estimated_yearly_volumes" maxWidth="90px" onSave={updateLeadField} />
-                    </td>
-                    <td className="px-2 py-1.5 max-w-[180px]">
-                      <InlineEditCell value={lead.strategic_priorities} leadId={lead.id} field="strategic_priorities" maxWidth="160px" multiline onSave={updateLeadField} />
                     </td>
                     <td className="px-2 py-1.5">
                       <InlineSelect value={lead.lead_priority} options={PRIORITY_OPTIONS} colorMap={PRIORITY_COLORS}
@@ -537,7 +536,7 @@ export default function HomePage() {
       </div>
 
       {showAddModal && (
-        <AddLeadModal onClose={() => setShowAddModal(false)} onAdded={newLeads => setLeads(prev => [...newLeads, ...prev])} />
+        <AddLeadModal onClose={() => setShowAddModal(false)} onAdded={newLeads => setLeads(prev => sortLeads([...newLeads, ...prev]))} />
       )}
 
       {panelLeads.length > 0 && (

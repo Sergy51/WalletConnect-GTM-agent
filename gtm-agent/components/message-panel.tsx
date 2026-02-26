@@ -25,10 +25,8 @@ const VP_COLORS: Record<string, string> = {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  'Very High': 'bg-red-100 text-red-700',
   High: 'bg-orange-100 text-orange-700',
   Medium: 'bg-yellow-100 text-yellow-700',
-  Low: 'bg-gray-100 text-gray-600',
 }
 
 function Spinner() {
@@ -170,6 +168,10 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
   const isUnenriched = localLead.lead_status === 'New'
   const keyVps = localLead.key_vp?.split(',').map(v => v.trim()).filter(Boolean) || []
   const relevantVpDetails = WC_VALUE_PROPS.filter(v => keyVps.includes(v.key))
+  const newsSources: { title: string; url: string }[] = (() => {
+    try { return localLead.news_sources ? JSON.parse(localLead.news_sources) : [] }
+    catch { return [] }
+  })()
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -229,6 +231,22 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
               <div>
                 <div className="text-xs text-muted-foreground mb-1">Strategic Priorities</div>
                 <p className="text-sm leading-relaxed">{localLead.strategic_priorities}</p>
+                {newsSources.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {newsSources.map((s, i) => (
+                      <a
+                        key={i}
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={s.title}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors"
+                      >
+                        Source {i + 1}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

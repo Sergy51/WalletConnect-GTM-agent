@@ -22,13 +22,29 @@
 - API routes: REST-style (`/api/leads`, `/api/qualify/[id]`, `/api/generate-message/[id]`)
 
 ### Enrichment pipeline (`/api/qualify/[id]`)
-Four sequential phases per lead:
-1. **News search** — Exa.ai fetches recent company news (90 days)
-2. **Type + size classification** — Cheap Claude call (120 tokens) → `lead_type` + `company_size_employees`; skipped if both already set
-3. **Contact search** — Exa.ai targeted search using `getPrioritizedTitles(type, size)` — only runs when `contact_name` is null
-4. **Full enrichment** — Single Claude call writes all remaining fields
+Five sequential phases per lead:
+0. **Website discovery** — if `company_website` is null, Exa finds the official site and saves it before proceeding
+1. **News search** — Exa fetches payments-relevant company news (90 days); sources stored as JSON in `news_sources`
+2. **Type + size classification** — cheap Claude call (120 tokens) → `lead_type` + `company_size_employees`; skipped if both already set
+3. **Contact search** — two-phase Exa search using `getPrioritizedTitles(type, size)`; only runs when `contact_name` is null
+4. **Full enrichment** — single Claude call writes all remaining fields; status → `Enriched`
 
-**Why two-phase:** Phase 2 is cheap; it gates Phase 3 so we search for the right roles before spending Exa credits on the wrong titles.
+**Why two-phase classification:** Phase 2 is cheap; it gates Phase 3 so we search for the right roles before spending Exa credits on the wrong titles.
+
+### Contact search — two-phase Exa strategy (`lib/exa.ts → searchForDecisionMakers`)
+- **Phase A** — 3 parallel searches:
+  1. Company website's team/about/leadership pages (`site:${website}`)
+  2. Broad web search for named executives (`"Company" (Title OR Title) name contact`)
+  3. LinkedIn profiles filtered by company + title (`includeDomains: ['linkedin.com']`)
+- **Phase B** — extracts candidate person names from Phase A text using a capitalised-words regex, then does a targeted LinkedIn search: `("Firstname Lastname") "Company"` filtered to `linkedin.com`. Catches cases where the name appears in a press release but no LinkedIn URL came back from the title search.
+- Results from all phases are deduplicated by URL before being passed to Claude.
+
+### News sources (`lib/exa.ts → searchCompanyNews`)
+- Query is payments-focused: `"Company" payments crypto digital assets stablecoin checkout partnerships product launch news`
+- Fetches 6 candidates, filters with `isGenericUrl()`, takes up to 3 specific articles
+- `isGenericUrl` drops root domains, category pages (`/news`, `/blog`, `/en/news`), LinkedIn company profiles — keeps specific article URLs, tweets, LinkedIn posts
+- Stored as JSON string in `leads.news_sources`; displayed as pill links in the message panel
+- LinkedIn posts and tweets are allowed (not excluded)
 
 ### Contact targeting (`getPrioritizedTitles`)
 - Separate role hierarchies for PSP and Merchant leads
@@ -38,8 +54,9 @@ Four sequential phases per lead:
 
 ### Email generation
 - Follows `/Users/sergio/Documents/Code/WalletConnect/email_generation_guidelines.md` — 6-part structure: subject → opening (specific) → value bridge → credibility signal → CTA → sign-off as "Sergio Sanchez, Partnerships Director, WalletConnect"
-- Under 150 words
-- Includes 2 few-shot examples in the prompt (Adyen PSP, Gucci Merchant)
+- Under 150 words; opening must reference a specific real milestone from news
+- Includes 3 few-shot examples in the prompt (Adyen PSP, Outpayce PSP Travel, Gucci Merchant)
+- Banned openers: "I hope this finds you well", "I wanted to reach out"
 - Insert first, then update follow_up fields separately (non-critical — see DB note below)
 
 ### Email inferred flag
@@ -49,39 +66,58 @@ Four sequential phases per lead:
 
 ### Key VP (`key_vp` column)
 - Stored as comma-separated string e.g. `"Lower Fees, Global Reach"`
-- Rendered as color-coded pill badges via `KeyVpCell` component — NOT via `InlineSelect` (InlineSelect can't match multi-value strings)
-- 5 defined value props in `lib/constants.ts`: Lower Fees, Instant Settlement, Global Reach, Zero Chargebacks, Single API
+- Rendered as color-coded pill badges via `KeyVpCell` — NOT via `InlineSelect` (can't match multi-value strings)
+- 6 defined value props in `lib/constants.ts`: Lower Fees, Instant Settlement, Global Reach, Compliance, New Volumes, Single API
+- PSP hint: prefer Compliance + Single API; Merchant hint: prefer Lower Fees + New Volumes
+
+### Lead priority (`lead_priority`)
+- Two tiers: `High` (crypto/digital assets/stablecoins/Web3 mentioned in strategic priorities) or `Medium` (not mentioned)
+- Displayed in table as "Crypto Priority" column
+
+### Lead status & sort order
+- Statuses: `New → Enriched → Contacted → Proposal → Negotiating → Won | Lost | Churned`
+- Table sorted by funnel stage (Won first, Churned last) then alphabetically within each stage
+- `STATUS_RANK` map drives the sort in `sortLeads()`, applied on every state mutation
 
 ---
 
 ## Current State
 
 ### Working
-- Single-page table UI with inline editing (status, type, industry, priority, crypto)
-- Add Lead modal: manual form + CSV upload with column mapping
-- Enrichment pipeline (4-phase): news → classify → contacts → full enrich
+- Single-page table UI with inline editing for all fields; company name click opens message panel
+- Add Lead modal: manual form (upfront: Company, Website, Contact, Role, Email; more fields: Type, Industry, Employees, Revenue, LinkedIn, Key VP) + CSV upload with column mapping
+- Enrichment pipeline (5-phase): website → news → classify → contacts → full enrich
+- Two-phase LinkedIn URL discovery (name extraction → targeted profile search)
+- Payments-focused news with generic URL filtering; sources displayed as pill links in panel
+- Secondary contact fields in message panel (name, email, LinkedIn) — manual only
 - Tiered decision-maker targeting by lead type and company size
-- Message generation with 6-part email structure + follow-up drafts
+- Message generation with 6-part email structure + follow-up drafts; enrich button in panel for New leads
 - Email sending via Resend; lead status → `Contacted` on send
 - Delete All with confirmation
 - Batch enrich (sequential, per-row spinner feedback)
-- Message panel: company info sidebar + email editor + follow-up fields + recipient display
-- `key_vp` displays as colored pill badges in table
+- Leads sorted by funnel stage then alphabetically
 
-### Pending DB migration
-Run this in Supabase SQL editor if the `messages` table is missing follow-up columns:
+### Pending DB migrations
+Run in Supabase SQL editor if columns are missing:
 ```sql
+-- Secondary contact fields
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS secondary_contact_name text;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS secondary_contact_email text;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS secondary_contact_linkedin text;
+
+-- News sources (JSON array stored as text)
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS news_sources text;
+
+-- Follow-up scheduling
 ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS follow_up_1_due  timestamptz,
   ADD COLUMN IF NOT EXISTS follow_up_2_due  timestamptz,
   ADD COLUMN IF NOT EXISTS follow_up_1_body text,
   ADD COLUMN IF NOT EXISTS follow_up_2_body text;
 ```
-Without this, follow-up fields will be empty after generation (generation itself still works).
 
 ### Known issues / tech debt
-- `lead_priority` skews "High" — enrichment prompt not calibrated well enough; needs tighter scoring rubric
-- Send route re-generates follow-ups with a second Claude call after sending, overwriting any panel edits saved via `update-message`. Redundant — should be removed.
+- Send route re-generates follow-ups with a second Claude call after sending, overwriting panel edits. Redundant — should be removed (`app/api/send/[id]/route.ts` lines 56-86).
 - No actual follow-up scheduler — T+14 / T+21 due dates are stored but never triggered
 - Resend is on `onboarding@resend.dev` (free domain) — domain verification needed for production
 - `recharts` is installed but unused
@@ -91,25 +127,26 @@ Without this, follow-up fields will be empty after generation (generation itself
 
 ## Next Steps
 
-1. **Fix `lead_priority` skew** — add a scoring rubric to the Phase 4 Claude prompt: "High" = active crypto strategy or crypto-adjacent product, "Medium" = payments-focused but no crypto signal, "Low" = unclear fit. Currently almost always returns "High".
+1. **Apollo API for contact enrichment** — `qualify/[id]` has `// TODO: if EXA contact search returns no results, fall back to Apollo API`. Implement Apollo People Search when Exa returns no contact info. Env var: `APOLLO_API_KEY`. Apollo returns verified emails and LinkedIn URLs — much more reliable than Exa for this purpose.
 
-2. **Apollo API fallback** — `qualify/[id]` has `// TODO: if EXA contact search returns no results, fall back to Apollo API`. Add Apollo People Search call when Exa returns no contact info. Env var: `APOLLO_API_KEY`.
+2. **Follow-ups tab** — build a proper follow-up management view: list all sent leads with `follow_up_1_due` / `follow_up_2_due` dates, ability to preview/edit follow-up copy, and a send button per follow-up. Also remove the redundant Claude call in the send route (see tech debt above).
 
-3. **Follow-up automation** — build a scheduler (Vercel Cron or Supabase Edge Function) that queries `messages` where `follow_up_1_due <= now()` and `sent_at IS NOT NULL` and sends the follow-up email via Resend.
+3. **Tracking dashboard tab** — add a second tab (or section) with pipeline metrics: leads by status, conversion rates, emails sent vs opened, top industries/lead types. `recharts` is already installed and ready to use.
 
-4. **Remove redundant follow-up generation from send route** — `app/api/send/[id]/route.ts` lines 56-86 call Claude again post-send. Follow-ups are already generated in `generate-message`. Delete this block.
+4. **Make enrichment faster** — current pipeline is sequential (5 phases, multiple round-trips). Ideas: parallelise Phase 1 + Phase 0 where possible; cache Exa results for recently searched companies; consider running Phase 2 classification inside the Phase 4 prompt to save one Claude call; explore streaming responses to show partial results sooner.
 
 ---
 
 ## Important Context
 
 ### Gotchas
-- **No FK between `messages` and `leads`** — `DROP TABLE leads CASCADE` was run during the DB rebuild; it dropped the FK constraint from `messages.lead_id → leads.id`. The send route fetches lead and message in separate queries as a workaround — do not reintroduce a join.
+- **No FK between `messages` and `leads`** — `DROP TABLE leads CASCADE` was run during the DB rebuild; it dropped the FK constraint. The send route fetches lead and message in separate queries — do not reintroduce a join.
 - **`key_vp` is multi-value** — never pass it to `InlineSelect`; always use `KeyVpCell`.
 - **`walletconnect_value_prop` vs `key_vp`** — `walletconnect_value_prop` is a free-text paragraph written by Claude explaining fit; `key_vp` is a comma-separated list of 1-2 standardized keys from `WC_VALUE_PROPS`.
-- **Exa searches are two parallel calls** in `searchForDecisionMakers` (site-specific + general web). Results are deduplicated by URL before being passed to Claude.
+- **Contact search is two-phase** — Phase A runs 3 parallel Exa calls; Phase B does one more targeted LinkedIn search by extracted person name. Total: up to 4 Exa calls per enrichment in the contact phase alone.
+- **`isGenericUrl` in news search** — filters URLs where `pathname` has ≤2 segments and any segment matches known index words (news, blog, press, company, en, fr, etc.). Keeps specific article slugs, tweets, LinkedIn posts.
 - **Current Claude model:** `claude-sonnet-4-5` (set in `lib/claude.ts`). Update there to change globally.
-- **Enrichment only writes null fields** — it will never overwrite a manually set value. Check `overwritableFields` and `contactFields` arrays in `qualify/[id]/route.ts`.
+- **Enrichment only writes null fields** — never overwrites manually set values. Check `overwritableFields` and `contactFields` arrays in `qualify/[id]/route.ts`.
 
 ### DB schema tables
 - `leads` — recreated clean (no cascade dependencies remain)

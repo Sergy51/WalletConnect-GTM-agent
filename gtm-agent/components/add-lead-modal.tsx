@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
+import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
 import type { Lead } from '@/types'
 
 interface AddLeadModalProps {
@@ -35,14 +36,25 @@ const CSV_FIELD_MAP: Record<string, string> = {
   position: 'contact_role',
   email: 'contact_email',
   'email address': 'contact_email',
-  phone: 'contact_phone',
-  'phone number': 'contact_phone',
   linkedin: 'contact_linkedin',
   'linkedin url': 'contact_linkedin',
   source: 'lead_source',
   'lead source': 'lead_source',
   type: 'lead_type',
   'lead type': 'lead_type',
+  industry: 'industry',
+  employees: 'company_size_employees',
+  headcount: 'company_size_employees',
+  revenue: 'company_size_revenue',
+}
+
+const VP_COLORS: Record<string, string> = {
+  'Lower Fees': 'bg-green-100 text-green-700',
+  'Instant Settlement': 'bg-blue-100 text-blue-700',
+  'Global Reach': 'bg-purple-100 text-purple-700',
+  'Compliance': 'bg-red-100 text-red-700',
+  'New Volumes': 'bg-teal-100 text-teal-700',
+  'Single API': 'bg-orange-100 text-orange-700',
 }
 
 function normalizeCsvRow(row: CsvRow): Record<string, string> {
@@ -61,9 +73,11 @@ function normalizeCsvRow(row: CsvRow): Record<string, string> {
 export function AddLeadModal({ onClose, onAdded }: AddLeadModalProps) {
   const [tab, setTab] = useState<'manual' | 'csv'>('manual')
   const [submitting, setSubmitting] = useState(false)
+  const [showMore, setShowMore] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const [csvRows, setCsvRows] = useState<Record<string, string>[]>([])
   const [uploading, setUploading] = useState(false)
+  const [selectedVps, setSelectedVps] = useState<string[]>([])
 
   const [form, setForm] = useState({
     company: '',
@@ -71,11 +85,20 @@ export function AddLeadModal({ onClose, onAdded }: AddLeadModalProps) {
     contact_name: '',
     contact_role: '',
     contact_email: '',
-    contact_phone: '',
-    contact_linkedin: '',
-    lead_source: '',
     lead_type: '',
+    industry: '',
+    company_size_employees: '',
+    company_size_revenue: '',
+    contact_linkedin: '',
   })
+
+  function toggleVp(vp: string) {
+    setSelectedVps(prev =>
+      prev.includes(vp)
+        ? prev.filter(v => v !== vp)
+        : prev.length < 2 ? [...prev, vp] : prev
+    )
+  }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -103,10 +126,7 @@ export function AddLeadModal({ onClose, onAdded }: AddLeadModalProps) {
 
   async function submitManual(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.company) {
-      toast.error('Company is required')
-      return
-    }
+    if (!form.company) { toast.error('Company is required'); return }
     setSubmitting(true)
     try {
       const payload: Record<string, string | null> = {
@@ -115,10 +135,12 @@ export function AddLeadModal({ onClose, onAdded }: AddLeadModalProps) {
         contact_name: form.contact_name || null,
         contact_role: form.contact_role || null,
         contact_email: form.contact_email || null,
-        contact_phone: form.contact_phone || null,
-        contact_linkedin: form.contact_linkedin || null,
-        lead_source: form.lead_source || null,
         lead_type: form.lead_type || null,
+        industry: form.industry || null,
+        company_size_employees: form.company_size_employees || null,
+        company_size_revenue: form.company_size_revenue || null,
+        contact_linkedin: form.contact_linkedin || null,
+        key_vp: selectedVps.length > 0 ? selectedVps.join(', ') : null,
       }
       const res = await fetch('/api/leads', {
         method: 'POST',
@@ -190,38 +212,29 @@ export function AddLeadModal({ onClose, onAdded }: AddLeadModalProps) {
         {/* Content */}
         <div className="overflow-y-auto flex-1 px-6 py-5">
           {tab === 'manual' && (
-            <form id="manual-form" onSubmit={submitManual} className="space-y-4">
+            <form id="manual-form" onSubmit={submitManual} className="space-y-3">
+
+              {/* Upfront fields */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Company <span className="text-red-500">*</span></label>
+                <Input
+                  value={form.company}
+                  onChange={(e) => setForm({ ...form, company: e.target.value })}
+                  placeholder="Acme Payments Inc."
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Website</label>
+                <Input
+                  value={form.company_website}
+                  onChange={(e) => setForm({ ...form, company_website: e.target.value })}
+                  placeholder="https://acme.com"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2 space-y-1">
-                  <label className="text-sm font-medium">Company *</label>
-                  <Input
-                    value={form.company}
-                    onChange={(e) => setForm({ ...form, company: e.target.value })}
-                    placeholder="Acme Payments Inc."
-                    required
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Website</label>
-                  <Input
-                    value={form.company_website}
-                    onChange={(e) => setForm({ ...form, company_website: e.target.value })}
-                    placeholder="https://acme.com"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Type</label>
-                  <Select value={form.lead_type} onValueChange={(v) => setForm({ ...form, lead_type: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="PSP">PSP</SelectItem>
-                      <SelectItem value="Merchant">Merchant</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="space-y-1">
                   <label className="text-sm font-medium">Contact Name</label>
                   <Input
@@ -238,46 +251,109 @@ export function AddLeadModal({ onClose, onAdded }: AddLeadModalProps) {
                     placeholder="VP Payments"
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Email</label>
-                  <Input
-                    type="email"
-                    value={form.contact_email}
-                    onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
-                    placeholder="jane@acme.com"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Phone</label>
-                  <Input
-                    value={form.contact_phone}
-                    onChange={(e) => setForm({ ...form, contact_phone: e.target.value })}
-                    placeholder="+1 555 000 0000"
-                  />
-                </div>
-                <div className="col-span-2 space-y-1">
-                  <label className="text-sm font-medium">LinkedIn</label>
-                  <Input
-                    value={form.contact_linkedin}
-                    onChange={(e) => setForm({ ...form, contact_linkedin: e.target.value })}
-                    placeholder="https://linkedin.com/in/janesmith"
-                  />
-                </div>
-                <div className="col-span-2 space-y-1">
-                  <label className="text-sm font-medium">Lead Source</label>
-                  <Select value={form.lead_source} onValueChange={(v) => setForm({ ...form, lead_source: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Inbound">Inbound</SelectItem>
-                      <SelectItem value="Outbound">Outbound</SelectItem>
-                      <SelectItem value="Referral">Referral</SelectItem>
-                      <SelectItem value="Event">Event</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Email</label>
+                <Input
+                  type="email"
+                  value={form.contact_email}
+                  onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
+                  placeholder="jane@acme.com"
+                />
+              </div>
+
+              {/* More fields toggle */}
+              <button
+                type="button"
+                onClick={() => setShowMore(v => !v)}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors pt-1"
+              >
+                <span className={`text-xs transition-transform inline-block ${showMore ? 'rotate-90' : ''}`}>▶</span>
+                {showMore ? 'Fewer fields' : 'More fields'}
+              </button>
+
+              {showMore && (
+                <div className="space-y-3 pt-1">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Type</label>
+                      <Select value={form.lead_type} onValueChange={(v) => setForm({ ...form, lead_type: v })}>
+                        <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="PSP">PSP</SelectItem>
+                          <SelectItem value="Merchant">Merchant</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Industry</label>
+                      <Select value={form.industry} onValueChange={(v) => setForm({ ...form, industry: v })}>
+                        <SelectTrigger><SelectValue placeholder="Select industry" /></SelectTrigger>
+                        <SelectContent>
+                          {INDUSTRIES.map(i => <SelectItem key={i} value={i}>{i}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Employees</label>
+                      <Select value={form.company_size_employees} onValueChange={(v) => setForm({ ...form, company_size_employees: v })}>
+                        <SelectTrigger><SelectValue placeholder="Headcount range" /></SelectTrigger>
+                        <SelectContent>
+                          {['1-10', '10-100', '100-500', '500-5000', '5000+'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Revenue</label>
+                      <Select value={form.company_size_revenue} onValueChange={(v) => setForm({ ...form, company_size_revenue: v })}>
+                        <SelectTrigger><SelectValue placeholder="Revenue range" /></SelectTrigger>
+                        <SelectContent>
+                          {['<$1M', '$1-10M', '$10-100M', '$100-500M', '$500M+'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">LinkedIn</label>
+                    <Input
+                      value={form.contact_linkedin}
+                      onChange={(e) => setForm({ ...form, contact_linkedin: e.target.value })}
+                      placeholder="linkedin.com/in/janesmith"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Key VP <span className="text-xs font-normal text-muted-foreground">(up to 2)</span></label>
+                    <div className="flex flex-wrap gap-2">
+                      {WC_VALUE_PROPS.map(({ key: vp }) => {
+                        const isSelected = selectedVps.includes(vp)
+                        const isDisabled = !isSelected && selectedVps.length >= 2
+                        return (
+                          <button
+                            key={vp}
+                            type="button"
+                            disabled={isDisabled}
+                            onClick={() => toggleVp(vp)}
+                            className={`text-[11px] px-2 py-1 rounded-full font-medium border transition-opacity ${
+                              isSelected
+                                ? (VP_COLORS[vp] || 'bg-gray-100 text-gray-600') + ' border-transparent'
+                                : 'bg-transparent border-border text-muted-foreground'
+                            } ${isDisabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer hover:opacity-80'}`}
+                          >
+                            {vp}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
             </form>
           )}
 

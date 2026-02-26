@@ -33,7 +33,6 @@ export async function POST(request: NextRequest) {
     lead_status: 'New',
     payments_stack: lead.payments_stack || null,
     crypto_capabilities: lead.crypto_capabilities || null,
-    estimated_yearly_volumes: lead.estimated_yearly_volumes || null,
     strategic_priorities: lead.strategic_priorities || null,
     lead_priority: lead.lead_priority || null,
     key_vp: lead.key_vp || null,

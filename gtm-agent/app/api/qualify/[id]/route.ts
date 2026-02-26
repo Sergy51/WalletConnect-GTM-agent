@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { anthropic, CLAUDE_MODEL, WC_PAY_SYSTEM_PROMPT } from '@/lib/claude'
-import { searchCompanyNews, searchForDecisionMakers } from '@/lib/exa'
+import { searchCompanyNews, searchForDecisionMakers, findCompanyWebsite } from '@/lib/exa'
 import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
 
 // Contact priority is based on company_size_employees (headcount), NOT company_size_revenue.
@@ -133,8 +133,17 @@ export async function POST(
   if (!lead.company) return NextResponse.json({ error: 'Lead must have a company name' }, { status: 400 })
 
   try {
+    // ─── Phase 0: Find website if missing ─────────────────────────────────────
+    let resolvedWebsite = lead.company_website
+    if (!resolvedWebsite) {
+      resolvedWebsite = await findCompanyWebsite(lead.company)
+      if (resolvedWebsite) {
+        await supabase.from('leads').update({ company_website: resolvedWebsite }).eq('id', id)
+      }
+    }
+
     // ─── Phase 1: Company news ────────────────────────────────────────────────
-    const companyNews = await searchCompanyNews(lead.company, lead.company_website)
+    const { context: companyNews, sources: newsSources } = await searchCompanyNews(lead.company, resolvedWebsite)
 
     // ─── Phase 2: Determine type + size (skip if already known) ───────────────
     // Use the known values first so manual overrides are respected.
@@ -150,7 +159,7 @@ export async function POST(
           content: `Classify this company for a B2B sales tool.
 
 Company: ${lead.company}
-Website: ${lead.company_website || 'Unknown'}
+Website: ${resolvedWebsite || 'Unknown'}
 Context: ${companyNews.slice(0, 600)}
 
 Return ONLY valid JSON:
@@ -178,7 +187,7 @@ No markdown, just JSON.`,
     let contactContext = ''
     if (!lead.contact_name) {
       const prioritizedTitles = getPrioritizedTitles(resolvedType, resolvedSize)
-      contactContext = await searchForDecisionMakers(lead.company, lead.company_website, prioritizedTitles)
+      contactContext = await searchForDecisionMakers(lead.company, resolvedWebsite, prioritizedTitles)
     }
 
     // TODO: if EXA contact search returns no results, fall back to Apollo API
@@ -195,7 +204,7 @@ No markdown, just JSON.`,
     const prompt = `You are enriching a B2B sales lead for WalletConnect Pay. Use ALL sources below.
 
 Company: ${lead.company}
-Website: ${lead.company_website || 'Unknown'}
+Website: ${resolvedWebsite || 'Unknown'}
 Already determined — lead_type: ${resolvedType ?? 'Unknown'}, employee range: ${resolvedSize ?? 'Unknown'}
 
 === RECENT NEWS & COMPANY CONTEXT ===
@@ -236,14 +245,12 @@ ${vpList}
 OTHER FIELDS:
 - lead_type: confirm or correct the already-determined value (${resolvedType ?? 'Unknown'})
 - industry: exactly one from: ${industryList}
-- lead_priority: score based on how explicitly crypto payments appear in the company's strategic priorities:
-  "Very High" = strategic priorities explicitly mention crypto payments, crypto acceptance, stablecoins, or digital assets
-  "High" = no explicit crypto mention, but stated goals (e.g. lower costs, faster settlement, global expansion) are meaningfully served by crypto payments
-  "Medium" = crypto payments are only a tangential or partial fit for stated priorities
-  "Low" = no meaningful fit between stated priorities and crypto payments
+- lead_priority: score based on whether crypto payments appear in the company's strategic priorities:
+  "High" = strategic priorities mention anything related to crypto, digital assets, stablecoins, blockchain payments, or Web3
+  "Medium" = strategic priorities do not mention crypto or digital assets
 - company_size_employees: confirm or correct (${resolvedSize ?? 'Unknown'}) — '1-10','10-100','100-500','500-5000','5000+'
 - company_size_revenue: '<$1M','$1-10M','$10-100M','$100-500M','$500M+'
-- payments_stack, estimated_yearly_volumes, strategic_priorities: fill if inferable
+- strategic_priorities: fill if inferable
 - walletconnect_value_prop: 2–3 sentences on why WC Pay fits this specific company
 
 Return ONLY valid JSON (null for unknown fields; key_vp always required):
@@ -252,15 +259,12 @@ Return ONLY valid JSON (null for unknown fields; key_vp always required):
   "industry": string | null,
   "company_size_employees": string | null,
   "company_size_revenue": string | null,
-  "payments_stack": string | null,
-  "estimated_yearly_volumes": string | null,
   "strategic_priorities": string | null,
-  "lead_priority": "Very High" | "High" | "Medium" | "Low" | null,
+  "lead_priority": "High" | "Medium" | null,
   "key_vp": string,
   "contact_name": string | null,
   "contact_role": string | null,
   "contact_email": string | null,
-  "contact_phone": string | null,
   "contact_linkedin": string | null,
   "company_description": string | null,
   "walletconnect_value_prop": string | null
@@ -303,19 +307,20 @@ No markdown, no explanation, just the JSON object.`
     const updates: Record<string, string | boolean | null> = { lead_status: 'Enriched' }
     const overwritableFields = [
       'lead_type', 'industry', 'company_size_employees', 'company_size_revenue',
-      'payments_stack', 'estimated_yearly_volumes',
       'strategic_priorities', 'lead_priority', 'key_vp',
       'company_description', 'walletconnect_value_prop',
     ]
     for (const field of overwritableFields) {
       if (!lead[field] && enriched[field] != null) updates[field] = enriched[field]
     }
-    const contactFields = ['contact_name', 'contact_role', 'contact_email', 'contact_phone', 'contact_linkedin']
+    const contactFields = ['contact_name', 'contact_role', 'contact_email', 'contact_linkedin']
     for (const field of contactFields) {
       if (!lead[field] && enriched[field] != null) updates[field] = enriched[field]
     }
     // Always write the inferred flag so it reflects this enrichment run
     updates.contact_email_inferred = emailInferred
+    // Always overwrite news sources with latest Exa results
+    if (newsSources.length > 0) updates.news_sources = JSON.stringify(newsSources)
 
     const { data: updatedLead, error: updateError } = await supabase
       .from('leads').update(updates).eq('id', id).select().single()

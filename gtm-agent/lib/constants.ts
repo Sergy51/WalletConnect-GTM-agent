@@ -1,10 +1,10 @@
 export const INDUSTRIES = [
-  'Payment Processing & Acquiring',
-  'Banking & Financial Services',
+  'PSPs & Acquirers',
+  'Banks & FIs',
   'Fintech & Neobanks',
   'E-commerce & Retail',
   'Marketplaces & Platforms',
-  'Gaming & Digital Entertainment',
+  'Gaming & Entertainment',
   'Travel & Hospitality',
   'Healthcare & Wellness',
   'Real Estate & PropTech',
