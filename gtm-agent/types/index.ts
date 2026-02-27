@@ -8,12 +8,24 @@ export type LeadStatus =
   | 'Lost'
   | 'Churned'
 
+export type LeadType =
+  | 'Aggregators & Platforms'
+  | 'Bank-based & Open Banking PSPs'
+  | 'Card Networks and Infrastructure'
+  | 'Merchant'
+  | 'Payment Method Aggregators & Commerce Platforms'
+  | 'Payment Gateways, Processors, & Orchestration Platforms'
+  | 'Payment Service Provider'
+  | 'Wallets & Alternative Payment Methods'
+  | 'Crypto Infrastructure'
+  | 'Other'
+
 export interface Lead {
   id: string
   // Company
   company: string
   company_website: string | null
-  lead_type: 'PSP' | 'Merchant' | 'Other' | null
+  lead_type: LeadType | null
   industry: string | null
   company_size_employees: string | null
   company_size_revenue: string | null
@@ -54,7 +66,37 @@ export interface Message {
   follow_up_2_due: string | null
   follow_up_1_body: string | null
   follow_up_2_body: string | null
+  follow_up_1_sent_at: string | null
+  follow_up_2_sent_at: string | null
   created_at: string
+}
+
+export type FollowUpNumber = 1 | 2
+
+export interface FollowUpItem {
+  message_id: string
+  lead_id: string
+  company: string
+  contact_name: string | null
+  contact_email: string | null
+  follow_up_number: FollowUpNumber
+  due_at: string
+  body: string | null
+}
+
+export interface PendingReachoutItem {
+  lead_id: string
+  company: string
+  contact_name: string | null
+  contact_email: string | null
+  lead_priority: 'High' | 'Medium' | null
+  industry: string | null
+}
+
+export interface DashboardData {
+  funnel: { status: string; count: number; fill: string }[]
+  pending_reachouts: PendingReachoutItem[]
+  upcoming_follow_ups: FollowUpItem[]
 }
 
 export interface SocialMediaItem {

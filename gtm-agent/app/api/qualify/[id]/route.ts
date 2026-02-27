@@ -2,107 +2,108 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { anthropic, CLAUDE_MODEL, WC_PAY_SYSTEM_PROMPT } from '@/lib/claude'
 import { searchCompanyNews, searchForDecisionMakers, findCompanyWebsite } from '@/lib/exa'
-import { searchCompanyPriorities } from '@/lib/perplexity'
+import { searchCompanyPriorities, type PerplexityResult } from '@/lib/perplexity'
 import { searchRelevantTweets, type TweetResult } from '@/lib/twitter'
 import { searchPersonEmail } from '@/lib/apollo'
-import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
+import { INDUSTRIES, NON_MERCHANT_VALUE_PROPS, MERCHANT_VALUE_PROPS } from '@/lib/constants'
 
 // Contact priority is based on company_size_employees (headcount), NOT company_size_revenue.
 // Headcount determines how specialised/layered the org chart is.
 // Revenue is used only as a qualification signal, not for targeting decisions.
 
+// Merchant leads get their own VP set; all other types use the non-merchant VPs
+const MERCHANT_LIKE_TYPES = new Set([
+  'Merchant',
+])
+
+// Per-type role priority tables. Each type has tiers for large (5000+), mid (500-5000),
+// growth (100-500), and small (1-100) companies. Roles are ordered by priority — the
+// contact search picks the first match found.
+const ROLE_TABLES: Record<string, Record<string, string[]>> = {
+  // 1. Aggregators & Platforms (e.g. Shopify, Adyen for Platforms)
+  'Aggregators & Platforms': {
+    '5000+': ['Head of Payment Partnerships', 'VP Partnerships', 'Head of APMs', 'Head of Alternative Payments', 'VP Product', 'Director of Partnerships', 'Head of Business Development'],
+    '500-5000': ['VP Partnerships', 'Head of Payment Partnerships', 'Head of APMs', 'VP Product', 'Head of Business Development', 'CTO'],
+    '100-500': ['VP Partnerships', 'VP Product', 'Head of Business Development', 'Head of Payments', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'VP Partnerships'],
+  },
+  // 2. Bank-based & Open Banking PSPs (e.g. Trustly, Tink, GoCardless, Volt)
+  'Bank-based & Open Banking PSPs': {
+    '5000+': ['Head of Payment Partnerships', 'VP Partnerships', 'Head of Product', 'Head of Business Development', 'VP Product', 'Director of Partnerships'],
+    '500-5000': ['VP Partnerships', 'Head of Payment Partnerships', 'Head of Product', 'Head of Business Development', 'VP Product', 'CTO'],
+    '100-500': ['VP Partnerships', 'Head of Product', 'Head of Business Development', 'VP Product', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'Head of Partnerships'],
+  },
+  // 3. Card Networks and Infrastructure (e.g. Visa, Mastercard, FIS)
+  'Card Networks and Infrastructure': {
+    '5000+': ['SVP Digital Assets', 'VP Digital Assets', 'Head of Crypto Strategy', 'VP New Payment Methods', 'Head of Alternative Payments', 'VP Partnerships', 'Director of Digital Assets'],
+    '500-5000': ['VP Digital Assets', 'Head of Crypto Strategy', 'Head of Alternative Payments', 'VP Partnerships', 'VP Product', 'Head of Business Development'],
+    '100-500': ['VP Partnerships', 'Head of Alternative Payments', 'VP Product', 'Head of Business Development', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'VP Partnerships'],
+  },
+  // 4. Merchant (e.g. Gucci, Booking.com)
+  'Merchant': {
+    '5000+': ['VP Global Payments', 'Head of Global Payments', 'VP Payments', 'Head of Payment Products', 'Director of Treasury Operations', 'VP Financial Operations', 'Head of Checkout', 'VP Commerce'],
+    '500-5000': ['VP Payments', 'Head of Payments', 'Director of Treasury', 'VP Financial Operations', 'Head of Checkout', 'VP Commerce', 'CFO'],
+    '100-500': ['Head of Payments', 'Director of Payments', 'VP Finance', 'Head of E-commerce', 'Director of Product', 'CFO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CFO', 'Head of Operations', 'CTO'],
+  },
+  // 5. Payment Method Aggregators & Commerce Platforms (e.g. PPRO, Nuvei)
+  'Payment Method Aggregators & Commerce Platforms': {
+    '5000+': ['Head of APMs', 'VP Payment Partnerships', 'Head of Payment Methods', 'VP Product', 'Director of Partnerships', 'Head of Alternative Payments'],
+    '500-5000': ['Head of APMs', 'VP Payment Partnerships', 'Head of Payment Methods', 'VP Product', 'Head of Business Development', 'CTO'],
+    '100-500': ['VP Partnerships', 'VP Product', 'Head of Payment Methods', 'Head of Business Development', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'VP Partnerships'],
+  },
+  // 6. Payment Gateways, Processors, & Orchestration Platforms (e.g. Stripe, Checkout.com, Spreedly)
+  'Payment Gateways, Processors, & Orchestration Platforms': {
+    '5000+': ['Head of Alternative Payments', 'VP APMs', 'Head of Crypto Products', 'Head of Digital Assets', 'VP Partnerships', 'Director of Partnerships', 'VP Product'],
+    '500-5000': ['Head of Alternative Payments', 'VP Partnerships', 'Head of Crypto Products', 'VP Product', 'Head of Business Development', 'CTO'],
+    '100-500': ['VP Partnerships', 'VP Product', 'Head of Alternative Payments', 'Head of Business Development', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'VP Partnerships'],
+  },
+  // 7. Payment Service Provider (general PSPs)
+  'Payment Service Provider': {
+    '5000+': ['Head of Alternative Payments', 'VP Alternative Payments', 'Global Head of Partnerships', 'Head of Crypto Products', 'VP Partnerships', 'Director of Partnerships', 'VP Product'],
+    '500-5000': ['Head of Alternative Payments', 'VP Partnerships', 'Head of Crypto Products', 'VP Product', 'Head of Business Development', 'CTO'],
+    '100-500': ['VP Partnerships', 'VP Product', 'Head of Alternative Payments', 'Head of Business Development', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'VP Partnerships'],
+  },
+  // 8. Wallets & Alternative Payment Methods (e.g. Revolut, Klarna)
+  'Wallets & Alternative Payment Methods': {
+    '5000+': ['Head of Partnerships', 'VP Business Development', 'Head of Product', 'VP Partnerships', 'Director of Partnerships', 'VP Product'],
+    '500-5000': ['Head of Partnerships', 'VP Business Development', 'Head of Product', 'VP Product', 'CTO'],
+    '100-500': ['VP Partnerships', 'Head of Product', 'VP Business Development', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'Head of Partnerships'],
+  },
+  // 9. Crypto Infrastructure (e.g. Coinbase, Fireblocks, Circle)
+  'Crypto Infrastructure': {
+    '5000+': ['Head of Payments', 'VP Business Development', 'Head of Merchant Partnerships', 'VP Partnerships', 'VP Product', 'Director of Partnerships'],
+    '500-5000': ['Head of Payments', 'VP Business Development', 'Head of Merchant Partnerships', 'VP Product', 'Head of Partnerships', 'CTO'],
+    '100-500': ['VP Business Development', 'Head of Payments', 'VP Product', 'Head of Partnerships', 'CTO', 'CEO'],
+    small: ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'Head of Business Development'],
+  },
+}
+
 function getPrioritizedTitles(
   leadType: string | null,
   employeeRange: string | null
 ): string[] {
-  if (leadType === 'PSP') {
-    if (employeeRange === '5000+') return [
-      'Head of Alternative Payments',
-      'VP Alternative Payments',
-      'Global Head of Partnerships',
-      'Head of Crypto Products',
-      'Head of Digital Assets',
-      'Director of Partnerships',
-      'VP Partnerships',
-      'Head of Business Development',
-      'VP Product',
-    ]
-    if (employeeRange === '500-5000') return [
-      'Head of APMs',
-      'Head of Alternative Payments',
-      'VP Partnerships',
-      'Director of Partnerships',
-      'Head of Crypto',
-      'Head of Digital Assets',
-      'VP Product',
-      'Head of Business Development',
-      'CTO',
-    ]
-    if (employeeRange === '100-500') return [
-      'VP Partnerships',
-      'VP Product',
-      'Head of Business Development',
-      'Head of APMs',
-      'Head of Alternative Payments',
-      'VP Engineering',
-      'CTO',
-      'CEO',
-      'Founder',
-    ]
-    // 1-10 or 10-100
-    return ['CEO', 'Founder', 'Co-founder', 'CTO', 'VP Product', 'VP Partnerships']
+  // Look up per-type role table
+  if (leadType && ROLE_TABLES[leadType]) {
+    const table = ROLE_TABLES[leadType]
+    if (employeeRange === '5000+') return table['5000+']
+    if (employeeRange === '500-5000') return table['500-5000']
+    if (employeeRange === '100-500') return table['100-500']
+    return table.small
   }
 
-  if (leadType === 'Merchant') {
-    if (employeeRange === '5000+') return [
-      'VP Global Payments',
-      'Head of Global Payments',
-      'VP Payments',
-      'Head of Payment Products',
-      'Director of Treasury Operations',
-      'VP Financial Operations',
-      'Head of Checkout',
-      'VP Commerce',
-      'Director of Finance',
-    ]
-    if (employeeRange === '500-5000') return [
-      'VP Payments',
-      'Head of Payments',
-      'Director of Treasury',
-      'VP Financial Operations',
-      'Head of Checkout',
-      'VP Commerce',
-      'CFO',
-    ]
-    if (employeeRange === '100-500') return [
-      'Head of Payments',
-      'Director of Payments',
-      'VP Finance',
-      'Head of E-commerce',
-      'Director of Product',
-      'CFO',
-      'CEO',
-    ]
-    // 1-10 or 10-100
-    return ['CEO', 'Founder', 'Co-founder', 'CFO', 'Head of Operations', 'CTO']
-  }
-
-  // Other / Unknown — generic fallback, biased toward seniority at large companies
+  // Other / Unknown — generic fallback
   if (employeeRange === '5000+' || employeeRange === '500-5000') return [
-    'VP Partnerships',
-    'Director of Partnerships',
-    'Head of Business Development',
-    'VP Product',
-    'CFO',
-    'CTO',
+    'VP Partnerships', 'Director of Partnerships', 'Head of Business Development', 'VP Product', 'CFO', 'CTO',
   ]
   if (employeeRange === '100-500') return [
-    'VP Partnerships',
-    'VP Product',
-    'Head of Business Development',
-    'CFO',
-    'CTO',
-    'CEO',
+    'VP Partnerships', 'VP Product', 'Head of Business Development', 'CFO', 'CTO', 'CEO',
   ]
   return ['CEO', 'Founder', 'Co-founder', 'CTO', 'CFO', 'VP Partnerships']
 }
@@ -150,7 +151,7 @@ export async function POST(
     // ─── Phase 1: Company news + Perplexity + Twitter (parallel) ──────────────
     const [{ context: companyNews, sources: newsSources }, perplexityPriorities, tweetSummaries]: [
       Awaited<ReturnType<typeof import('@/lib/exa').searchCompanyNews>>,
-      string[],
+      PerplexityResult[],
       TweetResult[],
     ] = await Promise.all([
       searchCompanyNews(lead.company, resolvedWebsite),
@@ -177,11 +178,11 @@ Context: ${companyNews.slice(0, 600)}
 
 Return ONLY valid JSON:
 {
-  "lead_type": "PSP" | "Merchant" | "Other",
+  "lead_type": "Aggregators & Platforms" | "Bank-based & Open Banking PSPs" | "Card Networks and Infrastructure" | "Merchant" | "Payment Method Aggregators & Commerce Platforms" | "Payment Gateways, Processors, & Orchestration Platforms" | "Payment Service Provider" | "Wallets & Alternative Payment Methods" | "Crypto Infrastructure" | "Other",
   "company_size_employees": "1-10" | "10-100" | "100-500" | "500-5000" | "5000+" | null
 }
 
-- lead_type: "PSP" if payment processor/gateway/acquirer/infrastructure; "Merchant" if commerce/retail/marketplace/travel/gaming; "Other" otherwise
+- lead_type: pick the most specific type. "Merchant" for commerce/retail/marketplace/travel/gaming. For payment infrastructure use the most accurate category. "Other" only if none fit.
 - company_size_employees: best estimate of headcount range, or null if truly unknown
 
 No markdown, just JSON.`,
@@ -207,8 +208,10 @@ No markdown, just JSON.`,
 
     // ─── Phase 4: Full enrichment Claude call ─────────────────────────────────
     const industryList = INDUSTRIES.join(', ')
-    const vpList = WC_VALUE_PROPS.map(v => `"${v.key}": ${v.description}`).join('\n')
-    const vpKeys = WC_VALUE_PROPS.map(v => `"${v.key}"`).join(', ')
+    const isMerchant = resolvedType && MERCHANT_LIKE_TYPES.has(resolvedType)
+    const applicableVps = isMerchant ? MERCHANT_VALUE_PROPS : NON_MERCHANT_VALUE_PROPS
+    const vpList = applicableVps.map(v => `"${v.key}": ${v.description}`).join('\n')
+    const vpKeys = applicableVps.map(v => `"${v.key}"`).join(', ')
 
     // Build the ranked title list for the prompt so Claude knows the fallback order
     const prioritizedTitles = getPrioritizedTitles(resolvedType, resolvedSize)
@@ -240,24 +243,31 @@ Rules:
 - Scan ALL sources (news, team pages, press releases) for person names and titles matching the list above
 - Use the highest-priority role you find evidence of; only move to the next if no trace of the previous exists
 - Recognise patterns like "Jane Smith, Head of Payments at ${lead.company}" or "${lead.company} appoints Sarah Lee as VP Partnerships"
+- CRITICAL: The person MUST currently work at ${lead.company}. Watch for these disqualifiers:
+  • LinkedIn profiles showing a different current employer (even if they were at ${lead.company} in the past)
+  • People at a parent/subsidiary company (e.g. someone at Visa is NOT a Cybersource contact)
+  • News articles about someone joining or leaving ${lead.company} — only pick them if they JOINED, not left
+  • If their LinkedIn headline or experience says a different company, skip them
+  If no current employee is found for any priority role, return contact_name: null rather than picking someone who left
 - contact_email: return a real address only if found in the sources; otherwise return null (do NOT invent one)
 - contact_linkedin: linkedin.com/in/... URL if in context; null if not found
 
 KEY VALUE PROPOSITIONS (mandatory — never return null):
-Pick 1–2 from EXACTLY: ${vpKeys}
-${resolvedType === 'PSP'
-  ? '→ PSP: prefer "Compliance" (travel rule + sanctions screening) and "Single API" (one integration, all merchants)'
-  : resolvedType === 'Merchant'
-    ? '→ Merchant: prefer "Lower Fees" (0.5–1% vs 2.5–3.5% cards) and "New Volumes" (crypto-native customers, 15–20% larger baskets)'
-    : '→ Default to "Lower Fees, Global Reach" if type is unclear'}
-Return as comma-separated string. If unsure, default to "Lower Fees, Global Reach".
+Pick 1–2 from EXACTLY these options: ${vpKeys}
 
-WalletConnect Pay value prop reference:
 ${vpList}
 
+IMPORTANT: Do NOT default to the same values for every company. Hyper-tailor your pick based on what matters most to THIS specific company given:
+- Their size and maturity (a 10-person startup cares about different things than a 5000+ enterprise)
+- Their existing crypto/blockchain experience (crypto-native companies already have coverage — they need fee predictability or modularity, not "widest coverage")
+- Their specific pain points from the news/context above (settlement speed issues? compliance burden? looking for new revenue?)
+- Their business model (marketplace vs direct merchant vs payment processor)
+${isMerchant ? '→ Merchants: Consider whether they want faster cash flow (settlement), margin improvement (fees), new customer segments (volumes), or conversion optimization (UX).' : '→ Non-merchant companies: Consider whether they need compliance help, want a simple integration, need modular flexibility, want the broadest wallet coverage, or care most about predictable pricing for their merchants.'}
+Return as comma-separated string.
+
 OTHER FIELDS:
-- lead_type: confirm or correct the already-determined value (${resolvedType ?? 'Unknown'})
-- industry: exactly one from: ${industryList}
+- lead_type: confirm or correct (${resolvedType ?? 'Unknown'}). Must be one of: "Aggregators & Platforms", "Bank-based & Open Banking PSPs", "Card Networks and Infrastructure", "Merchant", "Payment Method Aggregators & Commerce Platforms", "Payment Gateways, Processors, & Orchestration Platforms", "Payment Service Provider", "Wallets & Alternative Payment Methods", "Crypto Infrastructure", "Other"
+- industry: ${resolvedType === 'Merchant' ? `exactly one from: ${industryList}` : 'always null (only used for Merchant leads)'}
 - lead_priority: score based on whether crypto payments appear in the company's strategic priorities:
   "High" = strategic priorities mention anything related to crypto, digital assets, stablecoins, blockchain payments, or Web3
   "Medium" = strategic priorities do not mention crypto or digital assets
@@ -274,7 +284,7 @@ OTHER FIELDS:
 
 Return ONLY valid JSON (null for unknown fields; key_vp always required):
 {
-  "lead_type": "PSP" | "Merchant" | "Other" | null,
+  "lead_type": string | null,
   "industry": string | null,
   "company_size_employees": string | null,
   "company_size_revenue": string | null,
@@ -309,7 +319,16 @@ No markdown, no explanation, just the JSON object.`
       enriched = JSON.parse(match[0])
     }
 
-    if (!enriched.key_vp) enriched.key_vp = 'Lower Fees, Global Reach'
+    if (!enriched.key_vp) {
+      const finalType = enriched.lead_type || resolvedType
+      enriched.key_vp = finalType && MERCHANT_LIKE_TYPES.has(finalType)
+        ? 'Lower Fees, New Volumes'
+        : 'Integration Simplicity, Compliance'
+    }
+
+    // Industry only applies to Merchant leads
+    const finalType = enriched.lead_type || resolvedType
+    if (finalType !== 'Merchant') enriched.industry = null
 
     // Normalize strategic_priorities into the structured JSON string format.
     // Claude may return the field as a JSON object (structured) or a plain string (legacy).
@@ -398,8 +417,10 @@ No markdown, no explanation, just the JSON object.`
     }
 
     const updates: Record<string, string | boolean | null> = { lead_status: 'Enriched' }
+    // Always overwrite lead_type so old PSP/Merchant/Other values get reclassified
+    if (enriched.lead_type) updates.lead_type = enriched.lead_type
     const overwritableFields = [
-      'lead_type', 'industry', 'company_size_employees', 'company_size_revenue',
+      'industry', 'company_size_employees', 'company_size_revenue',
       'strategic_priorities', 'lead_priority', 'key_vp',
       'company_description', 'walletconnect_value_prop',
     ]

@@ -6,7 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { AddLeadModal } from '@/components/add-lead-modal'
 import { MessagePanel } from '@/components/message-panel'
-import { INDUSTRIES, WC_VALUE_PROPS } from '@/lib/constants'
+import { DashboardTab } from '@/components/dashboard-tab'
+import { INDUSTRIES, LEAD_TYPES, WC_VALUE_PROPS } from '@/lib/constants'
 import type { Lead, LeadStatus } from '@/types'
 
 const STATUS_OPTIONS: LeadStatus[] = ['New', 'Enriched', 'Contacted', 'Proposal', 'Negotiating', 'Won', 'Lost', 'Churned']
@@ -29,7 +30,7 @@ function sortLeads(leads: Lead[]): Lead[] {
     return a.company.localeCompare(b.company)
   })
 }
-const TYPE_OPTIONS = ['PSP', 'Merchant', 'Other'] as const
+const TYPE_OPTIONS = LEAD_TYPES
 const PRIORITY_OPTIONS = ['High', 'Medium'] as const
 
 const STATUS_COLORS: Record<string, string> = {
@@ -49,12 +50,17 @@ const PRIORITY_COLORS: Record<string, string> = {
 }
 
 const VP_COLORS: Record<string, string> = {
-  'Lower Fees': 'bg-green-100 text-green-700',
-  'Instant Settlement': 'bg-blue-100 text-blue-700',
-  'Global Reach': 'bg-purple-100 text-purple-700',
+  // PSP
+  'Integration Simplicity': 'bg-orange-100 text-orange-700',
   'Compliance': 'bg-red-100 text-red-700',
+  'Widest Coverage': 'bg-purple-100 text-purple-700',
+  'Modular': 'bg-indigo-100 text-indigo-700',
+  'Fee Predictability': 'bg-cyan-100 text-cyan-700',
+  // Merchant
+  'Faster Settlement': 'bg-blue-100 text-blue-700',
+  'Lower Fees': 'bg-green-100 text-green-700',
   'New Volumes': 'bg-teal-100 text-teal-700',
-  'Single API': 'bg-orange-100 text-orange-700',
+  'Best-in-Class UX': 'bg-pink-100 text-pink-700',
 }
 
 function Spinner() {
@@ -272,6 +278,7 @@ export default function HomePage() {
   const [panelLeads, setPanelLeads] = useState<Lead[]>([])
   const [panelIndex, setPanelIndex] = useState(0)
   const [showApolloDialog, setShowApolloDialog] = useState(false)
+  const [activeTab, setActiveTab] = useState<'leads' | 'dashboard'>('leads')
   const apolloEnabled = process.env.NEXT_PUBLIC_APOLLO_ENABLED === 'true'
 
   const fetchLeads = useCallback(async () => {
@@ -417,6 +424,12 @@ export default function HomePage() {
     fetchLeads()
   }
 
+  function handleNavigateToLead(leadId: string) {
+    setActiveTab('leads')
+    const lead = leads.find(l => l.id === leadId)
+    if (lead) setPanelLeads([lead])
+  }
+
   const allSelected = leads.length > 0 && selected.size === leads.length
 
   return (
@@ -445,137 +458,156 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto">
-        {loading ? (
-          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">Loading leads...</div>
-        ) : leads.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-muted-foreground text-sm gap-2">
-            <p>No leads yet.</p>
-            <Button size="sm" onClick={() => setShowAddModal(true)}>Add your first lead</Button>
-          </div>
-        ) : (
-          <table className="w-full text-xs border-collapse">
-            <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
-              <tr className="border-b">
-                {/* Sticky columns */}
-                <th className="sticky left-0 z-20 bg-muted/90 px-2 py-2.5 w-8 text-left">
-                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="rounded" />
-                </th>
-                <th className="sticky left-8 z-20 bg-muted/90 px-2 py-2.5 text-left font-medium whitespace-nowrap min-w-[120px]">Company</th>
-                <th className="sticky left-[152px] z-20 bg-muted/90 px-2 py-2.5 text-left font-medium whitespace-nowrap">Type</th>
-                {/* Scrollable columns */}
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Website</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Industry</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Emp.</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Rev.</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Contact</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Role</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Email</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">LinkedIn</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Status</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Crypto Priority</th>
-                <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Key VP</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {leads.map((lead) => {
-                const isSelected = selected.has(lead.id)
-                const isEnriching = enriching.has(lead.id)
-
-                return (
-                  <tr key={lead.id}
-                    className={`hover:bg-muted/30 transition-colors ${isSelected ? 'bg-blue-50/50' : ''} ${isEnriching ? 'opacity-60' : ''}`}
-                  >
-                    {/* Sticky cells */}
-                    <td className={`sticky left-0 z-10 px-2 py-1.5 w-8 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
-                      {isEnriching ? <Spinner /> : (
-                        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(lead.id)} className="rounded" />
-                      )}
-                    </td>
-                    <td className={`sticky left-8 z-10 px-2 py-1.5 font-medium min-w-[120px] max-w-[160px] ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
-                      <button
-                        onClick={() => openPanelForSingleLead(lead)}
-                        className="truncate block text-left text-blue-600 hover:underline font-medium w-full"
-                        title={`Open ${lead.company}`}
-                      >
-                        {lead.company}
-                      </button>
-                    </td>
-                    <td className={`sticky left-[152px] z-10 px-2 py-1.5 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
-                      <InlineSelect value={lead.lead_type} options={TYPE_OPTIONS} onChange={v => updateLeadField(lead.id, 'lead_type', v)} />
-                    </td>
-
-                    {/* Scrollable cells */}
-                    <td className="px-2 py-1.5">
-                      {lead.company_website
-                        ? <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline font-medium">Website</a>
-                        : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineSelect value={lead.industry} options={INDUSTRIES} onChange={v => updateLeadField(lead.id, 'industry', v)} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineEditCell value={lead.company_size_employees} leadId={lead.id} field="company_size_employees" maxWidth="70px" onSave={updateLeadField} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineEditCell value={lead.company_size_revenue} leadId={lead.id} field="company_size_revenue" maxWidth="80px" onSave={updateLeadField} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineEditCell value={lead.contact_name} leadId={lead.id} field="contact_name" maxWidth="120px" onSave={updateLeadField} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineEditCell value={lead.contact_role} leadId={lead.id} field="contact_role" maxWidth="120px" onSave={updateLeadField} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <div className="flex items-center gap-1">
-                        <InlineEditCell
-                          value={lead.contact_email}
-                          leadId={lead.id}
-                          field="contact_email"
-                          maxWidth="120px"
-                          textClassName={lead.contact_email_inferred ? 'text-orange-500' : ''}
-                          onSave={updateLeadField}
-                        />
-                        {lead.contact_email_inferred && lead.contact_email && (
-                          <span
-                            className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold cursor-help leading-none shrink-0"
-                            title="This email was AI-generated and may not be real. Verify before sending."
-                          >!</span>
-                        )}
-                        {lead.contact_email_verified && lead.contact_email && (
-                          <span
-                            className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-green-100 text-green-600 text-[10px] font-bold cursor-help leading-none shrink-0"
-                            title="This email was verified by Apollo.io."
-                          >✓</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-2 py-1.5">
-                      {lead.contact_linkedin
-                        ? <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline font-medium">LinkedIn</a>
-                        : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineSelect value={lead.lead_status} options={STATUS_OPTIONS} colorMap={STATUS_COLORS}
-                        onChange={v => updateLeadField(lead.id, 'lead_status', v)} />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <InlineSelect value={lead.lead_priority} options={PRIORITY_OPTIONS} colorMap={PRIORITY_COLORS}
-                        onChange={v => updateLeadField(lead.id, 'lead_priority', v)} />
-                    </td>
-                    <td className="px-2 py-1.5 min-w-[140px]">
-                      <InlineKeyVpCell value={lead.key_vp} leadId={lead.id} onSave={updateLeadField} />
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
+      {/* Tab bar */}
+      <div className="flex items-center border-b shrink-0 px-4 bg-background">
+        {(['leads', 'dashboard'] as const).map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            className={`capitalize text-sm px-3 py-2 border-b-2 transition-colors ${
+              activeTab === tab
+                ? 'border-foreground font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >{tab}</button>
+        ))}
       </div>
+
+      {/* Content */}
+      {activeTab === 'leads' ? (
+        <div className="flex-1 overflow-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">Loading leads...</div>
+          ) : leads.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground text-sm gap-2">
+              <p>No leads yet.</p>
+              <Button size="sm" onClick={() => setShowAddModal(true)}>Add your first lead</Button>
+            </div>
+          ) : (
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
+                <tr className="border-b">
+                  {/* Sticky columns */}
+                  <th className="sticky left-0 z-20 bg-muted/90 px-2 py-2.5 w-8 text-left">
+                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="rounded" />
+                  </th>
+                  <th className="sticky left-8 z-20 bg-muted/90 px-2 py-2.5 text-left font-medium whitespace-nowrap min-w-[120px]">Company</th>
+                  <th className="sticky left-[152px] z-20 bg-muted/90 px-2 py-2.5 text-left font-medium whitespace-nowrap">Type</th>
+                  {/* Scrollable columns */}
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Website</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Industry</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Emp.</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Rev.</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Contact</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Role</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Email</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">LinkedIn</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Status</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Crypto Priority</th>
+                  <th className="px-2 py-2.5 text-left font-medium whitespace-nowrap">Key VP</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {leads.map((lead) => {
+                  const isSelected = selected.has(lead.id)
+                  const isEnriching = enriching.has(lead.id)
+
+                  return (
+                    <tr key={lead.id}
+                      className={`hover:bg-muted/30 transition-colors ${isSelected ? 'bg-blue-50/50' : ''} ${isEnriching ? 'opacity-60' : ''}`}
+                    >
+                      {/* Sticky cells */}
+                      <td className={`sticky left-0 z-10 px-2 py-1.5 w-8 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
+                        {isEnriching ? <Spinner /> : (
+                          <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(lead.id)} className="rounded" />
+                        )}
+                      </td>
+                      <td className={`sticky left-8 z-10 px-2 py-1.5 font-medium min-w-[120px] max-w-[160px] ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
+                        <button
+                          onClick={() => openPanelForSingleLead(lead)}
+                          className="truncate block text-left text-blue-600 hover:underline font-medium w-full"
+                          title={`Open ${lead.company}`}
+                        >
+                          {lead.company}
+                        </button>
+                      </td>
+                      <td className={`sticky left-[152px] z-10 px-2 py-1.5 ${isSelected ? 'bg-blue-50/90' : 'bg-background'}`}>
+                        <InlineSelect value={lead.lead_type} options={TYPE_OPTIONS} onChange={v => updateLeadField(lead.id, 'lead_type', v)} />
+                      </td>
+
+                      {/* Scrollable cells */}
+                      <td className="px-2 py-1.5">
+                        {lead.company_website
+                          ? <a href={lead.company_website} target="_blank" rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline font-medium">Website</a>
+                          : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineSelect value={lead.industry} options={INDUSTRIES} onChange={v => updateLeadField(lead.id, 'industry', v)} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineEditCell value={lead.company_size_employees} leadId={lead.id} field="company_size_employees" maxWidth="70px" onSave={updateLeadField} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineEditCell value={lead.company_size_revenue} leadId={lead.id} field="company_size_revenue" maxWidth="80px" onSave={updateLeadField} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineEditCell value={lead.contact_name} leadId={lead.id} field="contact_name" maxWidth="120px" onSave={updateLeadField} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineEditCell value={lead.contact_role} leadId={lead.id} field="contact_role" maxWidth="120px" onSave={updateLeadField} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center gap-1">
+                          <InlineEditCell
+                            value={lead.contact_email}
+                            leadId={lead.id}
+                            field="contact_email"
+                            maxWidth="120px"
+                            textClassName={lead.contact_email_inferred ? 'text-orange-500' : ''}
+                            onSave={updateLeadField}
+                          />
+                          {lead.contact_email_inferred && lead.contact_email && (
+                            <span
+                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold cursor-help leading-none shrink-0"
+                              title="This email was AI-generated and may not be real. Verify before sending."
+                            >!</span>
+                          )}
+                          {lead.contact_email_verified && lead.contact_email && (
+                            <span
+                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-green-100 text-green-600 text-[10px] font-bold cursor-help leading-none shrink-0"
+                              title="This email was verified by Apollo.io."
+                            >✓</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {lead.contact_linkedin
+                          ? <a href={lead.contact_linkedin} target="_blank" rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline font-medium">LinkedIn</a>
+                          : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineSelect value={lead.lead_status} options={STATUS_OPTIONS} colorMap={STATUS_COLORS}
+                          onChange={v => updateLeadField(lead.id, 'lead_status', v)} />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineSelect value={lead.lead_priority} options={PRIORITY_OPTIONS} colorMap={PRIORITY_COLORS}
+                          onChange={v => updateLeadField(lead.id, 'lead_priority', v)} />
+                      </td>
+                      <td className="px-2 py-1.5 min-w-[140px]">
+                        <InlineKeyVpCell value={lead.key_vp} leadId={lead.id} onSave={updateLeadField} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 overflow-auto">
+          <DashboardTab onNavigateToLead={handleNavigateToLead} />
+        </div>
+      )}
 
       {showApolloDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

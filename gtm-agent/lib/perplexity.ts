@@ -1,7 +1,12 @@
+export interface PerplexityResult {
+  text: string
+  url: string | null
+}
+
 export async function searchCompanyPriorities(
   company: string,
   website: string | null
-): Promise<string[]> {
+): Promise<PerplexityResult[]> {
   const apiKey = process.env.PERPLEXITY_API_KEY
   if (!apiKey) return []
 
@@ -32,6 +37,7 @@ export async function searchCompanyPriorities(
 
     const data = await response.json()
     const content = data.choices?.[0]?.message?.content || ''
+    const citations: string[] = data.citations || []
 
     // Parse JSON array from response
     const match = content.match(/\[[\s\S]*\]/)
@@ -40,9 +46,19 @@ export async function searchCompanyPriorities(
     const parsed = JSON.parse(match[0])
     if (!Array.isArray(parsed)) return []
 
+    // Match citation markers [1], [2] etc. in the text to link bullets to sources
     return parsed
       .filter((item: unknown): item is string => typeof item === 'string' && item.length > 0)
       .slice(0, 5)
+      .map((text: string) => {
+        // Find the first citation reference like [1] in the bullet text
+        const citationMatch = text.match(/\[(\d+)\]/)
+        const citationIndex = citationMatch ? parseInt(citationMatch[1], 10) - 1 : -1
+        const url = citationIndex >= 0 && citationIndex < citations.length ? citations[citationIndex] : null
+        // Strip citation markers from displayed text
+        const cleanText = text.replace(/\s*\[\d+\]/g, '').trim()
+        return { text: cleanText, url }
+      })
   } catch {
     return []
   }

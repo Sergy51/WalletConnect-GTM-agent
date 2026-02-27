@@ -129,7 +129,7 @@ export async function searchForDecisionMakers(
 
   // Phase A — three parallel searches:
   // 1. Company website's team/about/leadership pages
-  // 2. Broader web search for named executives at the company
+  // 2. Broader web search for named executives at the company (recent results only)
   // 3. LinkedIn profiles filtered by company + title (using includeDomains for reliable domain filtering)
   const [siteResults, webResults, linkedinByTitle] = await Promise.all([
     website
@@ -140,8 +140,10 @@ export async function searchForDecisionMakers(
         })
       : Promise.resolve([]),
     exaSearch(`"${company}" (${titleQuery}) name email contact`, {
-      num_results: 3,
+      num_results: 5,
       contents: { text: { max_characters: 800 } },
+      // Prefer recent results to avoid picking up people who have left
+      start_published_date: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
     }),
     exaSearch(`"${company}" (${titleQuery})`, {
       num_results: 5,

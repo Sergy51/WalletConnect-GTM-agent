@@ -16,12 +16,17 @@ interface MessagePanelProps {
 }
 
 const VP_COLORS: Record<string, string> = {
-  'Lower Fees': 'bg-green-100 text-green-700',
-  'Instant Settlement': 'bg-blue-100 text-blue-700',
-  'Global Reach': 'bg-purple-100 text-purple-700',
+  // PSP
+  'Integration Simplicity': 'bg-orange-100 text-orange-700',
   'Compliance': 'bg-red-100 text-red-700',
+  'Widest Coverage': 'bg-purple-100 text-purple-700',
+  'Modular': 'bg-indigo-100 text-indigo-700',
+  'Fee Predictability': 'bg-cyan-100 text-cyan-700',
+  // Merchant
+  'Faster Settlement': 'bg-blue-100 text-blue-700',
+  'Lower Fees': 'bg-green-100 text-green-700',
   'New Volumes': 'bg-teal-100 text-teal-700',
-  'Single API': 'bg-orange-100 text-orange-700',
+  'Best-in-Class UX': 'bg-pink-100 text-pink-700',
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -39,7 +44,8 @@ interface StrategicPrioritiesDisplayProps {
 }
 
 function StrategicPrioritiesDisplay({ priorities, newsSources }: StrategicPrioritiesDisplayProps) {
-  let parsed: { news_and_press?: string[]; company_content?: string[]; social_media?: string[] } | null = null
+  type ContentItem = string | { text: string; url: string | null }
+  let parsed: { news_and_press?: string[]; company_content?: ContentItem[]; social_media?: string[] } | null = null
   try {
     const obj = JSON.parse(priorities)
     if (obj && typeof obj === 'object' && (obj.news_and_press || obj.company_content || obj.social_media)) {
@@ -107,35 +113,51 @@ function StrategicPrioritiesDisplay({ priorities, newsSources }: StrategicPriori
         {hasContent && (
           <CollapsibleSection label="Company Content">
             <ul className="text-sm leading-relaxed space-y-1">
-              {(parsed.company_content ?? []).map((item: string, i: number) => (
-                <li key={i} className="flex gap-1.5">
-                  <span className="text-muted-foreground shrink-0">•</span>
-                  <span>{item}</span>
-                </li>
-              ))}
+              {(parsed.company_content ?? []).map((item: string | { text: string; url: string | null }, i: number) => {
+                const text = typeof item === 'string' ? item : item.text
+                const url = typeof item === 'string' ? null : item.url
+                return (
+                  <li key={i} className="flex gap-1.5">
+                    <span className="text-muted-foreground shrink-0">•</span>
+                    <span>
+                      {text}
+                      {url && (
+                        <a href={url} target="_blank" rel="noopener noreferrer"
+                          className="ml-1 text-[11px] text-blue-600 hover:underline">
+                          (source)
+                        </a>
+                      )}
+                    </span>
+                  </li>
+                )
+              })}
             </ul>
           </CollapsibleSection>
         )}
 
         {hasSocial && (
           <CollapsibleSection label="Social Media">
-            <div className="flex flex-wrap gap-1.5">
+            <ul className="text-sm leading-relaxed space-y-1">
               {socialItems.map((item, i) => {
                 const url = typeof item === 'string' ? null : item.url
                 const text = typeof item === 'string' ? item : item.text
-                const label = url?.includes('linkedin.com') ? 'LinkedIn' : url?.includes('twitter.com') || url?.includes('x.com') ? 'X / Twitter' : `Post ${i + 1}`
-                return url ? (
-                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" title={text}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors">
-                    {label} {i + 1}
-                  </a>
-                ) : (
-                  <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full bg-muted text-[11px] font-medium text-muted-foreground">
-                    {text.slice(0, 60)}…
-                  </span>
+                const platform = url?.includes('linkedin.com') ? 'LinkedIn' : url?.includes('twitter.com') || url?.includes('x.com') ? 'X' : null
+                return (
+                  <li key={i} className="flex gap-1.5">
+                    <span className="text-muted-foreground shrink-0">•</span>
+                    <span>
+                      {text}
+                      {url && (
+                        <a href={url} target="_blank" rel="noopener noreferrer"
+                          className="ml-1 text-[11px] text-blue-600 hover:underline">
+                          {platform ? `(${platform})` : '(source)'}
+                        </a>
+                      )}
+                    </span>
+                  </li>
                 )
               })}
-            </div>
+            </ul>
           </CollapsibleSection>
         )}
       </div>
@@ -171,12 +193,16 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
   const [body, setBody] = useState('')
   const [followUp1Body, setFollowUp1Body] = useState('')
   const [followUp2Body, setFollowUp2Body] = useState('')
-  const [followUp1Date] = useState(() => {
+  const [followUp1Date, setFollowUp1Date] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10)
   })
-  const [followUp2Date] = useState(() => {
+  const [followUp2Date, setFollowUp2Date] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 21); return d.toISOString().slice(0, 10)
   })
+  const [primaryName, setPrimaryName] = useState('')
+  const [primaryRole, setPrimaryRole] = useState('')
+  const [primaryEmail, setPrimaryEmail] = useState('')
+  const [primaryLinkedIn, setPrimaryLinkedIn] = useState('')
   const [secondaryName, setSecondaryName] = useState('')
   const [secondaryEmail, setSecondaryEmail] = useState('')
   const [secondaryLinkedIn, setSecondaryLinkedIn] = useState('')
@@ -191,14 +217,39 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
     setBody('')
     setFollowUp1Body('')
     setFollowUp2Body('')
+    const d1 = new Date(); d1.setDate(d1.getDate() + 14)
+    setFollowUp1Date(d1.toISOString().slice(0, 10))
+    const d2 = new Date(); d2.setDate(d2.getDate() + 21)
+    setFollowUp2Date(d2.toISOString().slice(0, 10))
+    setPrimaryName(lead.contact_name || '')
+    setPrimaryRole(lead.contact_role || '')
+    setPrimaryEmail(lead.contact_email || '')
+    setPrimaryLinkedIn(lead.contact_linkedin || '')
     setSecondaryName(lead.secondary_contact_name || '')
     setSecondaryEmail(lead.secondary_contact_email || '')
     setSecondaryLinkedIn(lead.secondary_contact_linkedin || '')
     if (lead.lead_status !== 'New') {
-      generateMessage(lead)
+      fetchExistingMessage(lead)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?.id])
+
+  async function fetchExistingMessage(targetLead: Lead = localLead) {
+    try {
+      const res = await fetch(`/api/generate-message/${targetLead.id}`)
+      if (!res.ok) return
+      const msg: Message | null = await res.json()
+      if (msg) {
+        setMessage(msg)
+        setSubject(msg.subject || '')
+        setBody(msg.body || '')
+        setFollowUp1Body(msg.follow_up_1_body || '')
+        setFollowUp2Body(msg.follow_up_2_body || '')
+        if (msg.follow_up_1_due) setFollowUp1Date(msg.follow_up_1_due.slice(0, 10))
+        if (msg.follow_up_2_due) setFollowUp2Date(msg.follow_up_2_due.slice(0, 10))
+      }
+    } catch { /* silent */ }
+  }
 
   async function generateMessage(targetLead: Lead = localLead) {
     setGenerating(true)
@@ -219,6 +270,8 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
       setBody(msg.body || '')
       setFollowUp1Body(msg.follow_up_1_body || '')
       setFollowUp2Body(msg.follow_up_2_body || '')
+      if (msg.follow_up_1_due) setFollowUp1Date(msg.follow_up_1_due.slice(0, 10))
+      if (msg.follow_up_2_due) setFollowUp2Date(msg.follow_up_2_due.slice(0, 10))
     } catch {
       toast.error('Failed to generate message')
     } finally {
@@ -251,7 +304,6 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
       const enriched: Lead = await res.json()
       setLocalLead(enriched)
       toast.success('Lead enriched')
-      generateMessage(enriched)
     } catch {
       toast.error('Enrichment failed')
     } finally {
@@ -259,7 +311,7 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
     }
   }
 
-  async function saveSecondaryContact(field: string, value: string) {
+  async function saveContactField(field: string, value: string) {
     try {
       await fetch(`/api/update-lead/${localLead.id}`, {
         method: 'PATCH',
@@ -331,6 +383,12 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
             )}
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleEnrichClick} disabled={enriching}>
+              {enriching ? <><Spinner /> Enriching...</> : (localLead.lead_status !== 'New' ? 'Re-enrich' : 'Enrich')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => generateMessage()} disabled={generating || localLead.lead_status === 'New'}>
+              {generating ? <><Spinner /> Drafting...</> : (message ? 'Re-draft email' : 'Draft email')}
+            </Button>
             {leads.length > 1 && index < leads.length - 1 && (
               <Button variant="outline" size="sm" onClick={onNext}>Skip</Button>
             )}
@@ -412,6 +470,61 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
               </div>
             )}
 
+            {/* Primary Contact */}
+            <div className="border-t pt-4">
+              <div className="text-xs uppercase text-muted-foreground font-medium mb-3">Primary Contact</div>
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-0.5">Name</label>
+                  <Input
+                    value={primaryName}
+                    onChange={e => setPrimaryName(e.target.value)}
+                    onBlur={() => saveContactField('contact_name', primaryName)}
+                    placeholder="Full name"
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-0.5">Role</label>
+                  <Input
+                    value={primaryRole}
+                    onChange={e => setPrimaryRole(e.target.value)}
+                    onBlur={() => saveContactField('contact_role', primaryRole)}
+                    placeholder="e.g. VP of Payments"
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-0.5">Email</label>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      value={primaryEmail}
+                      onChange={e => setPrimaryEmail(e.target.value)}
+                      onBlur={() => saveContactField('contact_email', primaryEmail)}
+                      placeholder="email@company.com"
+                      className="h-7 text-xs flex-1"
+                    />
+                    {primaryEmail && localLead.contact_email_verified && (
+                      <span title="Verified by Apollo" className="text-green-600 text-sm shrink-0">✓</span>
+                    )}
+                    {primaryEmail && localLead.contact_email_inferred && !localLead.contact_email_verified && (
+                      <span title="Inferred email — not verified" className="text-orange-500 text-sm font-bold shrink-0">!</span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-0.5">LinkedIn</label>
+                  <Input
+                    value={primaryLinkedIn}
+                    onChange={e => setPrimaryLinkedIn(e.target.value)}
+                    onBlur={() => saveContactField('contact_linkedin', primaryLinkedIn)}
+                    placeholder="linkedin.com/in/..."
+                    className="h-7 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Secondary Contact */}
             <div className="border-t pt-4">
               <div className="text-xs uppercase text-muted-foreground font-medium mb-3">Secondary Contact</div>
@@ -421,7 +534,7 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
                   <Input
                     value={secondaryName}
                     onChange={e => setSecondaryName(e.target.value)}
-                    onBlur={() => saveSecondaryContact('secondary_contact_name', secondaryName)}
+                    onBlur={() => saveContactField('secondary_contact_name', secondaryName)}
                     placeholder="Full name"
                     className="h-7 text-xs"
                   />
@@ -431,7 +544,7 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
                   <Input
                     value={secondaryEmail}
                     onChange={e => setSecondaryEmail(e.target.value)}
-                    onBlur={() => saveSecondaryContact('secondary_contact_email', secondaryEmail)}
+                    onBlur={() => saveContactField('secondary_contact_email', secondaryEmail)}
                     placeholder="email@company.com"
                     className="h-7 text-xs"
                   />
@@ -441,7 +554,7 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
                   <Input
                     value={secondaryLinkedIn}
                     onChange={e => setSecondaryLinkedIn(e.target.value)}
-                    onBlur={() => saveSecondaryContact('secondary_contact_linkedin', secondaryLinkedIn)}
+                    onBlur={() => saveContactField('secondary_contact_linkedin', secondaryLinkedIn)}
                     placeholder="linkedin.com/in/..."
                     className="h-7 text-xs"
                   />
@@ -450,31 +563,20 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
             </div>
           </div>
 
-          {/* Right: Message editor or enrich prompt */}
-          <div className="flex-1 p-5 overflow-y-auto">
-            {isUnenriched ? (
+          {/* Right: Message editor */}
+          <div className="flex-1 p-5 overflow-y-auto relative">
+            {generating ? (
+              <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
+                <div className="h-5 w-5 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
+                <span className="text-sm">Generating draft...</span>
+              </div>
+            ) : !message ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
                 <p className="text-sm text-muted-foreground max-w-xs">
-                  This lead hasn&apos;t been enriched yet. Enrich it first to find the right contact and generate a personalised email.
+                  {isUnenriched
+                    ? 'Enrich this lead first, then draft an email.'
+                    : 'No email drafted yet. Click "Draft email" above to generate one.'}
                 </p>
-                <Button onClick={handleEnrichClick} disabled={enriching} className="mt-1">
-                  {enriching ? (
-                    <span className="flex items-center gap-2"><Spinner /> Enriching...</span>
-                  ) : 'Enrich'}
-                </Button>
-
-                {showApolloDialog && (
-                  <div className="mt-4 p-4 border rounded-lg bg-background shadow-sm max-w-sm">
-                    <div className="font-medium text-sm mb-1">Use Apollo.io for email lookup?</div>
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Apollo can find verified email addresses using API credits. Each enrichment uses at most 1 API call.
-                    </p>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => enrichLead(false)}>Skip Apollo</Button>
-                      <Button size="sm" onClick={() => enrichLead(true)}>Use Apollo</Button>
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -493,51 +595,52 @@ export function MessagePanel({ leads, index, onNext, onClose }: MessagePanelProp
                   </div>
                 </div>
 
-                {generating ? (
-                  <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
-                    <div className="h-4 w-4 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
-                    <span>Generating draft...</span>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Subject</label>
+                  <Input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Email subject" />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground uppercase">Body</label>
+                  <Textarea value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder="Email body" />
+                </div>
+
+                <div className="border-t pt-4 space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground uppercase">Follow-up 1</div>
+                  <Input type="date" value={followUp1Date} onChange={e => setFollowUp1Date(e.target.value)} className="w-40" />
+                  <Textarea value={followUp1Body} onChange={e => setFollowUp1Body(e.target.value)} rows={3}
+                    placeholder="Follow-up 1 message" />
+                </div>
+
+                <div className="border-t pt-4 space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground uppercase">Follow-up 2</div>
+                  <Input type="date" value={followUp2Date} onChange={e => setFollowUp2Date(e.target.value)} className="w-40" />
+                  <Textarea value={followUp2Body} onChange={e => setFollowUp2Body(e.target.value)} rows={3}
+                    placeholder="Follow-up 2 message" />
+                </div>
+
+                <div className="pt-2">
+                  <Button onClick={sendEmail} disabled={sending || !message || !localLead.contact_email}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                    {sending ? 'Sending...' : 'Send Email'}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Apollo dialog overlay */}
+            {showApolloDialog && (
+              <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                <div className="p-4 border rounded-lg bg-background shadow-lg max-w-sm">
+                  <div className="font-medium text-sm mb-1">Use Apollo.io for email lookup?</div>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Apollo can find verified email addresses using API credits. Each enrichment uses at most 1 API call.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => enrichLead(false)}>Skip Apollo</Button>
+                    <Button size="sm" onClick={() => enrichLead(true)}>Use Apollo</Button>
                   </div>
-                ) : (
-                  <>
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground uppercase">Subject</label>
-                      <Input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Email subject" />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground uppercase">Body</label>
-                      <Textarea value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder="Email body" />
-                    </div>
-
-                    <div className="border-t pt-4 space-y-2">
-                      <div className="text-xs font-medium text-muted-foreground uppercase">Follow-up 1 (+14 days)</div>
-                      <Input type="date" value={followUp1Date} readOnly className="w-40" />
-                      <Textarea value={followUp1Body} onChange={e => setFollowUp1Body(e.target.value)} rows={3}
-                        placeholder="Follow-up 1 message" />
-                    </div>
-
-                    <div className="border-t pt-4 space-y-2">
-                      <div className="text-xs font-medium text-muted-foreground uppercase">Follow-up 2 (+21 days)</div>
-                      <Input type="date" value={followUp2Date} readOnly className="w-40" />
-                      <Textarea value={followUp2Body} onChange={e => setFollowUp2Body(e.target.value)} rows={3}
-                        placeholder="Follow-up 2 message" />
-                    </div>
-
-                    <div className="pt-2">
-                      <Button onClick={sendEmail} disabled={sending || !message || !localLead.contact_email}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white">
-                        {sending ? 'Sending...' : 'Send Email'}
-                      </Button>
-                      {!message && !generating && (
-                        <button onClick={() => generateMessage()}
-                          className="w-full mt-2 text-sm text-muted-foreground hover:text-foreground underline">
-                          Regenerate draft
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
+                </div>
               </div>
             )}
           </div>

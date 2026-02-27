@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { anthropic, CLAUDE_MODEL, WC_PAY_SYSTEM_PROMPT } from '@/lib/claude'
+import { WC_VALUE_PROPS } from '@/lib/constants'
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const { data: message } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('lead_id', id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!message) {
+    return NextResponse.json(null)
+  }
+  return NextResponse.json(message)
+}
 
 export async function POST(
   request: NextRequest,
@@ -21,15 +41,24 @@ export async function POST(
   }
 
   try {
-    const gtmTrack = lead.lead_type === 'PSP' ? 'PSP' : 'Merchant'
+    const isMerchant = lead.lead_type === 'Merchant'
 
-    const trackContext = gtmTrack === 'PSP'
-      ? 'This is a PSP/payment infrastructure company. Frame WC Pay as a distribution lever — one API integration adds crypto to all their merchants. Emphasise APM simplicity, built-in compliance, and the 500M+ wallet network they instantly access.'
-      : 'This is a merchant/commerce company. Frame WC Pay as a revenue and cost play — crypto customers have higher AOV, fees are 0.5–1% vs 2.5–3.5% for cards, settlement is instant, and there are no chargebacks.'
+    const trackContext = isMerchant
+      ? 'This is a merchant/commerce company. Frame WC Pay as a revenue and cost play — crypto customers have higher AOV (15–25% higher), fees are 0.5–1% vs 2.5–3.5% for cards, settlement is instant (seconds, 24/7), and there are no chargebacks.'
+      : `This is a ${lead.lead_type || 'payment infrastructure'} company. Frame WC Pay as a distribution lever — one APM-like API integration adds crypto to all their merchants. Emphasise integration simplicity (no changes to settlement/reconciliation), built-in compliance (travel rule + sanctions screening), and the 500M+ wallet network across 700+ wallets they instantly access.`
 
-    const ctaInstruction = gtmTrack === 'PSP'
-      ? 'Ask for a short call — e.g. "Would 20 minutes make sense to explore how this fits within your stack?"'
-      : 'Ask for a demo or short call — e.g. "Would a 15-minute call work to walk through a live checkout?"'
+    const ctaInstruction = isMerchant
+      ? 'Ask for a demo or short call — e.g. "Would a 15-minute call work to walk through a live checkout?"'
+      : 'Ask for a short call — e.g. "Would 20 minutes make sense to explore how this fits within your stack?"'
+
+    // Build rich VP context from the lead's key_vp
+    const keyVps = (lead.key_vp || '').split(',').map((v: string) => v.trim()).filter(Boolean)
+    const vpDetailBlock = keyVps.length > 0
+      ? keyVps.map((vp: string) => {
+          const match = WC_VALUE_PROPS.find(v => v.key === vp)
+          return match ? `• ${match.key}: ${match.emailContext}` : `• ${vp}`
+        }).join('\n')
+      : ''
 
     // Parse news sources for context
     let newsContext = ''
@@ -50,7 +79,10 @@ export async function POST(
           sections.push(`--- News & Press Releases ---\n${sp.news_and_press.map((b: string) => `• ${b}`).join('\n')}`)
         }
         if (sp.company_content?.length > 0) {
-          sections.push(`--- Company Content (Perplexity) ---\n${sp.company_content.map((b: string) => `• ${b}`).join('\n')}`)
+          sections.push(`--- Company Content (Perplexity) ---\n${sp.company_content.map((b: string | { text: string }) => {
+            const text = typeof b === 'string' ? b : b.text
+            return `• ${text}`
+          }).join('\n')}`)
         }
         // social_media intentionally excluded — tweet content is too noisy for email drafting
         if (sections.length > 0) {
@@ -73,10 +105,15 @@ export async function POST(
 Recipient: ${lead.contact_name || 'the decision maker'}, ${lead.contact_role || 'Decision Maker'} at ${lead.company}
 Company description: ${lead.company_description || lead.company}
 ${strategicIntelBlock}
-${newsContext ? newsContext + '\n' : ''}${lead.walletconnect_value_prop ? `Why WalletConnect Pay fits them: ${lead.walletconnect_value_prop}\n` : ''}Key value props: ${lead.key_vp || 'Lower Fees, Global Reach'}
+${newsContext ? newsContext + '\n' : ''}${lead.walletconnect_value_prop ? `Why WalletConnect Pay fits them: ${lead.walletconnect_value_prop}\n` : ''}
+=== KEY VALUE PROPOSITIONS TO EMPHASISE ===
+${vpDetailBlock || 'Lower Fees, New Volumes'}
+
 GTM context: ${trackContext}
 
-IMPORTANT: From the strategic intelligence above, pick the SINGLE most relevant and specific data point to reference in the email opening. Prefer data mentioning payments, crypto, digital assets, or partnerships. Do NOT try to reference all of them — the email must stay under 150 words.
+IMPORTANT:
+- From the strategic intelligence above, pick the SINGLE most relevant and specific data point to reference in the email opening. Prefer data mentioning payments, crypto, digital assets, or partnerships. Do NOT try to reference all of them — the email must stay under 150 words.
+- The value bridge MUST leverage the key value propositions above — use the specific data points and arguments provided to make the pitch concrete and tailored to this company's situation. Do not use generic selling points.
 
 === EMAIL STRUCTURE — follow exactly, total body under 150 words ===
 1. Subject: Short (5–8 words), specific to the recipient's company or role. No generic lines.
@@ -153,11 +190,14 @@ No markdown, no explanation, just the JSON object.`
 Recipient: ${lead.contact_name || 'the decision maker'}, ${lead.contact_role || 'Decision Maker'} at ${lead.company}
 Company context: ${lead.company_description || lead.company}
 ${lead.walletconnect_value_prop ? `Why WalletConnect Pay fits them: ${lead.walletconnect_value_prop}` : ''}
-Key value props: ${lead.key_vp || 'Lower Fees, Global Reach'}
+
+Key value propositions to emphasise:
+${vpDetailBlock || 'Lower Fees, New Volumes'}
 
 Rules:
 - 2 sentences max, ultra-concise
 - Start with something specific to them, not a generic opener
+- Reference the key value props above to make the pitch concrete
 - ${ctaInstruction}
 - No subject line
 
